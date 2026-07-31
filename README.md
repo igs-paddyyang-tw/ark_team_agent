@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.0/ark_team_agent-1.0.0-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.1/ark_team_agent-1.0.1-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.0/ark_team_agent-1.0.0-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.1/ark_team_agent-1.0.1-py3-none-any.whl
 
 # 2. 準備 team.yaml + .env
 cp team.yaml.example team.yaml   # 或自行建立
