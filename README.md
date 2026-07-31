@@ -20,28 +20,50 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ---
 
+## 快速開始
+
+```bash
+# 1. 安裝套件
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.0/ark_team_agent-1.0.0-py3-none-any.whl
+
+# 2. 準備 team.yaml + .env
+cp team.yaml.example team.yaml   # 或自行建立
+echo "TELEGRAM_BOT_TOKEN=your-token" > .env
+
+# 3. 啟動
+python start.py
+```
+
+**最簡 start.py：**
+
+```python
+import asyncio
+from dotenv import load_dotenv
+from ark_team_agent.team import run_team
+
+load_dotenv()
+
+if __name__ == "__main__":
+    asyncio.run(run_team())
+```
+
+---
+
 ## 功能特色
 
 - **多 Agent 協調**：`team.yaml` 定義 agent，4 層角色（admin / manager / leader / worker）
 - **Telegram Bot**：Forum Topic 路由、HTML 通報、ToolTracker、InlineKeyboard
-- **拍板迴路**：L1 自決 / L2 CEO‑CTO 拍板 / L3 升級 Paddy，ark-agent fallback，每日日報 + 翻案
+- **拍板迴路**：L1 自決 / L2 CEO‑CTO 拍板 / L3 升級，ark-agent fallback，每日日報 + 翻案
 - **MCP 通訊**：15+ tools，跨 Agent P2P / broadcast / wiki
-- **生命週期**：崩潰重啟、掛起偵測、成本控制、排程引擎
+- **生命週期管理**：崩潰重啟、掛起偵測、成本控制、排程引擎
 
 ---
 
-## 快速開始
+## 部署案例
 
-```bash
-# 產生預設設定
-ark-team-agent init
-
-# 設定環境變數
-export TELEGRAM_BOT_TOKEN="your-bot-token"
-
-# 啟動
-ark-team-agent team start
-```
+| 專案 | 說明 |
+|------|------|
+| [paddy-team-agent](https://github.com/igs-paddyyang-tw/paddy-team-agent) | Paddy 個人 AI 團隊（5 agents） |
 
 ---
 
@@ -51,7 +73,7 @@ ark-team-agent team start
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
-| **1.0.0** | 2026-07-31 | 初始版本：Decision Loop、TG UX、ark-agent 意圖分類（8 種）、10 agents |
+| **1.0.0** | 2026-07-31 | 初始版本：Decision Loop、TG UX、8 種意圖分類、10 agents |
 
 ---
 
