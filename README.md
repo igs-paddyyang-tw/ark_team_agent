@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.0.4-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.1/ark_team_agent-1.0.1-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.4/ark_team_agent-1.0.4-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.1/ark_team_agent-1.0.1-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.4/ark_team_agent-1.0.4-py3-none-any.whl
 
 # 2. 準備 team.yaml + .env
 cp team.yaml.example team.yaml   # 或自行建立
@@ -73,7 +73,11 @@ if __name__ == "__main__":
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
-| **1.0.0** | 2026-07-31 | 初始版本：Decision Loop、TG UX、8 種意圖分類、10 agents |
+| **1.0.4** | 2026-08-05 | 安全性：`reply_file` 路徑白名單、`wiki_ingest` 封閉檢查；修正 cron 日/月/星期欄位被忽略 |
+| 1.0.3 | 2026-07-31 | startup 通報去重 |
+| 1.0.2 | 2026-07-31 | `chat_router` 動態找 leader/admin；`api.py` 補 import |
+| 1.0.1 | 2026-07-31 | wiki_ingest 路徑、scheduler race、LLM retry 等 7 項修正 |
+| 1.0.0 | 2026-07-31 | 初始版本：Decision Loop、TG UX、8 種意圖分類、10 agents |
 
 ---
 

@@ -6,6 +6,72 @@
 
 ---
 
+## [1.0.4] — 2026-08-05
+
+> 依 `docs/reports/ark-team-agent-package-analysis-2026-08-05.md` 的 P0 優先序修正。
+
+### 安全性
+
+- **`reply_file` 加入路徑白名單** — 原本接受任意絕對路徑（docstring 自述「發送任意檔案」），
+  而 `file_path` 由 LLM 呼叫端提供、可能受提詞注入影響，等同 `.env` / `secrets/` / `~/.ssh`
+  的外洩管道。改為只允許 home 與 `agents/{instance}` 底下的
+  `output` / `artifacts` / `docs` / `knowledge`（agent 另含 `scripts`）。
+- **`wiki_ingest` 加入路徑封閉檢查** — 原本 `wiki_root/"raw"/source_path` 未做 containment，
+  含 `../` 即可跳出；且 fallback 為 `Path(source_path)`，明確允許任意絕對路徑。
+  新增共用工具 `_contained_path()` 限制在 `raw/` 底下，並區分「越界」與「找不到」。
+
+### 修正
+
+- **排程的 cron 日/月/星期欄位現在真正生效** — 舊 `_parse_cron` 只回傳
+  `(minute_set, hour_set)`，docstring 自述 "only minute + hour used"，導致
+  `0 18 * * 1`（每週一）每天觸發、`30 8 * * 1-5`（平日）週末照跑。
+  移除手寫解析器，改用早已是依賴的 apscheduler `CronTrigger`。
+  ⚠️ APScheduler 的 `day_of_week` 數字是 0=週一、標準 cron 是 0=週日，
+  故新增 `_normalize_dow()` 先轉成名稱形式，避免所有排程偏移一天。
+- **`job.timezone` 現在會影響「是否觸發」** — 舊實作先用全域時區比對 cron，
+  比對通過後才讀 `job.timezone` 重算，而該值只用於展開 `{date}`，
+  設定者以為改了執行時間但實際沒有。
+
+### 測試
+
+- 703 → 733 passed（新增 30 個）
+- 新增 `tests/test_mcp_path_guard.py`：封閉檢查、目錄穿越、絕對路徑、`~` 展開、多 root，
+  以及兩個 handler 的越界／不存在區分與正常路徑
+- `tests/test_scheduler.py` 改測 `_normalize_dow` / `_to_crontab` / `_cron_matches`，
+  含日／月／星期的迴歸案例
+
+---
+
+## [1.0.3] — 2026-07-31
+
+### 修正
+
+- startup 通報去重：相同 `chat_id` 只發一條啟動訊息（修正每個 agent 各發一條的問題）
+
+---
+
+## [1.0.2] — 2026-07-31
+
+### 修正
+
+- `chat_router`：動態找 leader/admin，不 hardcode `pm-agent`（支援各專案自訂 agent 名稱）
+- `api.py`：補 `import os`（修正 `send_to_instance` 500 error）
+
+---
+
+## [1.0.1] — 2026-07-31
+
+### 修正
+
+- `wiki_ingest` 路徑修正 + `index`/`log` 自建
+- `daemon` mkdir 修正
+- scheduler race condition 修正
+- LLM retry 機制
+- `decision_manager` / `team_mcp` 相對路徑改用 `get_home()`
+- token error、port env、`file_lock` mkdir 修正
+
+---
+
 ## [1.0.0] — 2026-07-30
 
 ### 新增
