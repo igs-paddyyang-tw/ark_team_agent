@@ -40,6 +40,11 @@
 - `tests/test_scheduler.py` 改測 `_normalize_dow` / `_to_crontab` / `_cron_matches`，
   含日／月／星期的迴歸案例
 
+### 文件
+
+- README 新增「產出結構」章節：`init` 鷹架 vs `team start` 自動產出，含各檔 policy、
+  `state/` 8 個 DB 清單、`{home}/instances/{name}/.kiro/` 路徑、手改無效項
+
 ---
 
 ## [1.0.3] — 2026-07-31
