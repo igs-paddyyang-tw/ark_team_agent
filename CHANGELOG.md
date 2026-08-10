@@ -6,6 +6,14 @@
 
 ---
 
+## [1.2.6] — 2026-08-10
+
+- **修專案根定位缺陷（pip 安裝環境失效）**：原 `Path(__file__).parent.parent.parent` 在安裝後指到 `.venv/lib/python3.x` 且不拋例外。
+  - 新增 `paths.py`：`find_project_root`（哨兵 `team.yaml`，找不到拋錯）、`resolve_project_root`（注入 > `ARK_TEAM_AGENT_HOME` > cwd 哨兵）、`package_asset`。
+  - `reply_task_image` 原永遠失敗 → `task_screenshot.py` 搬進 `ark_team_agent/scripts/` + `package-data`（隨 wheel 發布）。
+  - `run_spec_validator` 掃錯目錄 → `TeamScheduler(project_root=...)` 可注入，`team.py` 注入 `get_home()`。
+  - `src/` 執行碼已無 `.parent.parent.parent`；spec-validator 無 drift 日誌目標時改明示 log + `degraded`。
+
 ## [1.2.5] — 2026-08-10
 
 - TG 五指令目標明確化：/start（系統介紹+使用者 ID+授權狀態+如何對話，不 gate）、/status（+主程式健康行）、/help（新增：指令+職責導向成員）、/restart（先跳確認鍵，按確定才重啟）。set_my_commands 補 help。全動態、通用。
