@@ -6,6 +6,10 @@
 
 ---
 
+## [1.2.5] — 2026-08-10
+
+- TG 五指令目標明確化：/start（系統介紹+使用者 ID+授權狀態+如何對話，不 gate）、/status（+主程式健康行）、/help（新增：指令+職責導向成員）、/restart（先跳確認鍵，按確定才重啟）。set_my_commands 補 help。全動態、通用。
+
 ## [1.2.4] — 2026-08-10
 
 - N5 Phase B1：內建 `_builtin:memory-consolidate`（各 agent daily log >14 天搬 archive/、memory.md 超標記 degraded；純機械、無 LLM、非破壞性）。
