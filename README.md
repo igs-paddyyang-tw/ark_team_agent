@@ -116,7 +116,22 @@ if __name__ == "__main__":
 ### Telegram Bot
 - Forum Topic 路由、HTML 通報（支援粗體/斜體/刪除線/引用 v1.1.10+）
 - ToolTracker 人性化版面（v1.1.7+）
-- InlineKeyboard、重啟按鈕
+- InlineKeyboard、重啟確認按鈕（v1.2.5+）
+- 長訊息自動分段（4000 字上限，v1.1.5+）、出口自動清 ANSI 殘留（v1.2.3+）
+- Reply Template：`reply(text, template=...)` 具名模板 —— `news-daily` / `status-report` / `ops-report` / `task-dispatch` / `error-alert`（v1.2.0+）
+
+#### 指令（v1.2.5 起五指令目標分明）
+
+| 指令 | 用途 |
+|------|------|
+| `/start` | 系統介紹 + **你的 Telegram ID** + 授權狀態 + 如何對話（未授權者亦可查 ID 申請）|
+| `/status` | agent 分層狀態 + 主程式健康行（版本 / 運行數 / degraded）|
+| `/tasks` | 任務派工狀況 |
+| `/restart` | 重啟服務 —— **先跳確認鍵，按「確定重啟」才執行**（限私聊）|
+| `/help` | 細部介紹：指令清單 + 完整成員（職責導向，取自 `description`）+ `@mention` 語法 |
+| `/allow` `/deny` | 動態授權管理（admin only，免重啟）|
+
+`@mention` 派工：`@{agent} {需求}` → 直接發給該 agent。
 
 ### 拍板迴路（Decision Loop）
 - L1 自決 / L2 CEO‑CTO 拍板 / L3 升級
@@ -139,6 +154,41 @@ if __name__ == "__main__":
 - `reply_file` 路徑白名單（v1.0.4+）
 - `wiki_ingest` 路徑封閉檢查（v1.0.4+）
 - 硬編碼治理 3 波（v1.1.1~v1.1.3）：所有系統提詞和設定動態化
+
+---
+
+## 設定速查（v1.1~v1.2 新增）
+
+### `team.yaml` → `communication`
+
+| 設定 | 預設 | 說明 |
+|------|------|------|
+| `peer_reply_timeout_minutes` | `15` | A 請 B 後 N 分無回覆 → 主動 nudge A 重試/改派（`0`=關）v1.1.13+ |
+| `dispatch_context_ttl_minutes` | `30` | 派工脈絡保留時間；使用者續問時注入「你上一步請 X 處理 Y」（`0`=關）v1.2.2+ |
+| `tool_detail` | `false` | ToolTracker 顯示模式：`false`=人性化單行、`true`=完整工具序列（維運排查）v1.1.9+ |
+| `p2p.*` | — | worker↔worker 直接通訊策略（`enabled` / `max_rounds` / `cc_leader` / `emergency_mode`）|
+
+### `team.yaml` → 頂層 / `instances.<name>`
+
+| 設定 | 層級 | 說明 |
+|------|------|------|
+| `knowledge_search_order` | 頂層 | 知識庫櫃子搜尋優先序，如 `[shared, hoyeah]`；未設＝字母序 v1.2.0+ |
+| `task_prefix` / `task_suffix` | instance | 送往此 agent 的訊息自動包夾（如「只輸出結論、≤3000 字」）；空＝no-op v1.2.0+ |
+| `group` | instance (worker) | 指向所屬 leader，輸出改發該 leader 的 topic v1.1.0+ |
+| `skip_resume` | instance | `true`=開新對話、`false`=`--resume` 接續；未設依 role（admin/manager 接續）v1.1.3+ |
+| `multi_user` | instance (admin) | per-user session 隔離（`max_user_sessions` / `session_idle_timeout_minutes`）|
+| `cost_guard.per_instance_limits` | 頂層 | 各 agent 獨立日預算，超限只暫停該 agent |
+
+### `scheduler.yaml` 內建 job
+
+| `target` | 說明 |
+|------|------|
+| `_builtin:spec-validator` | Code ↔ Spec 一致性驗證（drift report）|
+| `_builtin:memory-consolidate` | 記憶治理：`memory/daily/*.md` >14 天搬 `archive/`、`memory.md` 超標記 `degraded`（純機械、無 LLM、非破壞性）v1.2.4+ |
+
+### 健康端點
+
+`GET /api/health` → `instances: {running, alive, total}`（`alive`＝running + awaiting_reply，v1.2.0+）、`degraded[]`（降級/中斷事件，含 `deferred_message:*`、`restart_interrupted:*`、`memory_oversized:*`）。
 
 ---
 
