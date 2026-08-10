@@ -6,6 +6,176 @@
 
 ---
 
+## [1.1.13] — 2026-08-10
+
+### 新增
+
+- **`send_to_instance` peer-reply timeout 語意優化** — 當目標 agent 超時未回應時，回傳明確的 timeout 狀態而非靜默失敗，呼叫端可據此決策是否重試或升級
+
+---
+
+## [1.1.12] — 2026-08-10
+
+### 修正
+
+- **agent 程式碼誤判治本** — 修正 error-class 分類邏輯將正常 code output 誤標為「生成失敗」
+- **補生成失敗/崩潰觀測** — 新增可觀測性指標，區分「真正的崩潰」與「程式碼區塊誤判」
+
+---
+
+## [1.1.11] — 2026-08-09
+
+### 修正
+
+- **生成失敗誤判 auth** — 修正 authentication 狀態被錯誤歸類為生成失敗
+- **`awaiting_reply` 永久卡住** — 修正 agent 狀態機在特定錯誤路徑下停留在 awaiting_reply 不回復
+
+---
+
+## [1.1.10] — 2026-08-09
+
+### 新增
+
+- **`_md_to_html` 擴充** — Telegram 訊息渲染新增支援斜體（`*text*`）、刪除線（`~~text~~`）、引用（`> text`）格式
+
+---
+
+## [1.1.9] — 2026-08-08
+
+### 修正
+
+- **多組架構訊息路由缺陷修復** — 修正多個 team 同時運行時，訊息路由可能發送到錯誤 group/topic 的問題（fish-team-agent 實戰回報）
+
+---
+
+## [1.1.8] — 2026-08-08
+
+### 修正
+
+- **重啟自動觸發邏輯** — 多 leader 架構下不再只挑第一個 leader 觸發重啟；無中斷任務時靜默重啟（不發通報）
+
+### 測試
+
+- 802 passed
+
+---
+
+## [1.1.7] — 2026-08-08
+
+### 修正
+
+- **ToolTracker 版面人性化** — 工具執行狀態通報改為單行階段摘要，取代原始工具清單（減少訊息噪音）
+
+---
+
+## [1.1.6] — 2026-08-07
+
+### 修正
+
+- **P2P 通報改發 General** — 跨 agent P2P 通訊的通報訊息改發 General Topic（而非各自 topic），避免訊息分散
+- **放寬 admin 數量** — 支援多 leader / 多 admin 架構，不再限制只能有一個 admin
+
+---
+
+## [1.1.5] — 2026-08-07
+
+### 修正
+
+- **Telegram UX 衛生** — 長訊息分段 + HTML 正規化 + 通報去噪 + 移除代號硬編碼（FR-1/2/3/5）
+
+### 測試
+
+- 795 passed
+
+---
+
+## [1.1.4] — 2026-08-07
+
+### 修正
+
+- **`wiki_query` 多櫃子掃描** — 知識庫查詢改為掃描所有已註冊 wiki 櫃子，不再只查第一個
+- **not-found 診斷** — 查無結果時回傳診斷訊息（列出已掃描的櫃子和可用文件），協助使用者定位問題
+
+---
+
+## [1.1.3] — 2026-08-07
+
+> 硬編碼治理 Wave 3（完結）：skip_resume 設定化 + template + validate + CI 掃描
+
+### 新增
+
+- **`skip_resume` 進設定檔** — 可在 team.yaml 的 instance 設定，role 自動預設（admin/manager 接續，worker fresh）
+- **`validate` 語意檢查** — `scheduler.target` 和 `authority-matrix` 的 owner 必須是有效 instance 名稱
+- **`preflight` / `degraded` 可觀測** — 啟動前檢查失敗不直接 crash，改為降級模式運行並通報
+- **CI 字面值掃描** — 新增掃描腳本偵測殘留的硬編碼字串
+
+### 修正
+
+- **template 明示** — init 產生的範本加入明確佔位符和註解（移除 nana 專屬名稱）
+- **`team_doc` 設定化** — TEAM.md 內容由 team.yaml 驅動，不再寫死
+
+---
+
+## [1.1.2] — 2026-08-06
+
+> 硬編碼治理 Wave 2：決策系統去硬編碼
+
+### 修正
+
+- **決策系統去硬編碼** — 決策域（domain）和決策者由 `authority-matrix.yml` 推導，不再寫死 `cto-agent` / `ceo-agent`
+- **移除 TEAM.md 硬塞 cto-agent** — 依 ADR-001 決策，本體（非啟動 agent）不在 TEAM.md 宣告
+- **範本 authority-matrix 去 nana 名** — 改為中性佔位符 + 註解
+
+---
+
+## [1.1.1] — 2026-08-06
+
+> 硬編碼治理 Wave 1
+
+### 修正
+
+- **火影字串移除** — 系統提詞中的火影角色名稱改為動態讀取 team.yaml description
+- **`general_topic` 動態化** — 不再寫死 topic ID，從 team.yaml `channel.general_topic_id` 讀取
+- **`agent.json` 動態生成** — `init` 時根據 instance 名稱和 role 自動生成，不硬編碼路徑
+
+---
+
+## [1.1.0] — 2026-08-06
+
+> 重大功能：Group Topic Routing
+
+### 新增
+
+- **Group Topic Routing** — worker agent 的輸出訊息改發所屬 leader 的 topic（而非 General），實現訊息歸類
+- **`_last_source` 追蹤** — 記錄每則訊息的來源 agent，支援追溯和 debug
+- **失敗退 General 標記** — 當 leader topic 發送失敗時，自動 fallback 到 General Topic 並標記 `[fallback]`
+- **P2P 升級優先 group leader** — 跨 agent 通訊升級時優先通知同 group 的 leader，不直上 admin
+
+### 向後相容
+
+- 未設定 topic 的 agent 行為不變（仍發 General）
+- `TEAM.md` policy 改為 `once`（首次生成後不覆寫，保留手動修改）
+
+### 測試
+
+- 補完 FR-3/4/5 自動化測試
+
+---
+
+## [1.0.5] — 2026-08-06
+
+### 新增
+
+- **Topic 持久化** — `state/topics.json` 保存已建立的 Telegram topic 映射，重啟不遺失
+- **BRAIN.md / CODE.md 鷹架** — `init` 時為每個 agent 產生 steering 文件骨架
+- **結構清理** — 移除冗餘模板檔案，統一目錄命名
+
+### 修正
+
+- `__version__` 同步為 1.0.5（match pyproject.toml）
+
+---
+
 ## [1.0.4] — 2026-08-05
 
 > 依 `docs/reports/ark-team-agent-package-analysis-2026-08-05.md` 的 P0 優先序修正。

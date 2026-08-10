@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.4-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.1.13-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.4/ark_team_agent-1.0.4-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.1.13/ark_team_agent-1.1.13-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,13 +24,16 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.0.4/ark_team_agent-1.0.4-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.1.13/ark_team_agent-1.1.13-py3-none-any.whl
 
-# 2. 準備 team.yaml + .env
+# 2. 初始化專案結構
+ark-team-agent init
+
+# 3. 準備 team.yaml + .env
 cp team.yaml.example team.yaml   # 或自行建立
 echo "TELEGRAM_BOT_TOKEN=your-token" > .env
 
-# 3. 啟動
+# 4. 啟動
 python start.py
 ```
 
@@ -38,13 +41,14 @@ python start.py
 
 ```python
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
 from ark_team_agent.team import run_team
 
 load_dotenv()
 
 if __name__ == "__main__":
-    asyncio.run(run_team())
+    asyncio.run(run_team(Path("team.yaml")))
 ```
 
 ---
@@ -68,7 +72,7 @@ if __name__ == "__main__":
 
 {working_directory}/            # 每個 agent（team.yaml instances 迴圈）
 ├── knowledge/ · docs/ · memory/
-└── .kiro/                      # steering(SOUL/MEMORY/USER) + agents/{name}.json + skills/(6)
+└── .kiro/                      # steering(SOUL/BRAIN/CODE/MEMORY/USER) + agents/{name}.json + skills/(6)
 ```
 
 內建 6 skills：`ark-grill-me · ark-superpowers · ark-spec-executor · ark-code-spec-validator · ark-skill-creator · ark-wiki-engine`
@@ -99,19 +103,52 @@ if __name__ == "__main__":
 
 ## 功能特色
 
-- **多 Agent 協調**：`team.yaml` 定義 agent，4 層角色（admin / manager / leader / worker）
-- **Telegram Bot**：Forum Topic 路由、HTML 通報、ToolTracker、InlineKeyboard
-- **拍板迴路**：L1 自決 / L2 CEO‑CTO 拍板 / L3 升級，ark-agent fallback，每日日報 + 翻案
-- **MCP 通訊**：15+ tools，跨 Agent P2P / broadcast / wiki
-- **生命週期管理**：崩潰重啟、掛起偵測、成本控制、排程引擎
+### 多 Agent 協調
+- `team.yaml` 定義 agent，4 層角色（admin / manager / leader / worker）
+- 支援多 leader / 多 admin 架構（v1.1.6+）
+- `skip_resume` 可設定：admin/manager 自動接續，worker 預設 fresh start（v1.1.3+）
+
+### Group Topic Routing（v1.1.0+）
+- Worker 輸出改發所屬 leader 的 Telegram topic（訊息歸類）
+- 失敗自動 fallback 到 General Topic 並標記
+- P2P 升級優先通知同 group leader
+
+### Telegram Bot
+- Forum Topic 路由、HTML 通報（支援粗體/斜體/刪除線/引用 v1.1.10+）
+- ToolTracker 人性化版面（v1.1.7+）
+- InlineKeyboard、重啟按鈕
+
+### 拍板迴路（Decision Loop）
+- L1 自決 / L2 CEO‑CTO 拍板 / L3 升級
+- ark-agent fallback 拍板（有前例自決、無前例升 Paddy）
+- 每日日報 + 翻案按鈕（24h 窗口）
+- `authority-matrix.yml` 動態推導決策者（v1.1.2+）
+
+### MCP 通訊
+- 15+ tools，跨 Agent P2P / broadcast / wiki
+- `send_to_instance` peer-reply timeout 語意回傳（v1.1.13+）
+- `wiki_query` 多櫃子掃描 + not-found 診斷（v1.1.4+）
+
+### 生命週期管理
+- 崩潰重啟、掛起偵測（hang_detector）、成本控制（cost_guard）
+- 排程引擎（完整 cron 支援，含日/月/星期 v1.0.4+）
+- Topic 持久化（state/topics.json，重啟不遺失 v1.0.5+）
+- Preflight / degraded 模式（v1.1.3+）
+
+### 安全性
+- `reply_file` 路徑白名單（v1.0.4+）
+- `wiki_ingest` 路徑封閉檢查（v1.0.4+）
+- 硬編碼治理 3 波（v1.1.1~v1.1.3）：所有系統提詞和設定動態化
 
 ---
 
 ## 部署案例
 
-| 專案 | 說明 |
-|------|------|
-| [paddy-team-agent](https://github.com/igs-paddyyang-tw/paddy-team-agent) | Paddy 個人 AI 團隊（5 agents） |
+| 專案 | 版本 | 說明 |
+|------|------|------|
+| [nana-team-agent](https://github.com/igs-paddyyang-tw/nana-team-agent) | editable（框架源） | 小娜 AI Team（10 agents）|
+| [paddy-team-agent](https://github.com/igs-paddyyang-tw/paddy-team-agent) | v1.0.1 | Paddy 個人 AI 團隊（5 agents）|
+| [fish-team-agent](https://github.com/igs-paddyyang/fish_team_agent) | v1.0.5 | 捕魚遊戲團隊（10 agents）|
 
 ---
 
@@ -121,11 +158,26 @@ if __name__ == "__main__":
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
-| **1.0.4** | 2026-08-05 | 安全性：`reply_file` 路徑白名單、`wiki_ingest` 封閉檢查；修正 cron 日/月/星期欄位被忽略 |
+| **1.1.13** | 2026-08-10 | `send_to_instance` peer-reply timeout 語意優化 |
+| 1.1.12 | 2026-08-10 | 治本 agent 程式碼誤判 + 生成失敗/崩潰觀測 |
+| 1.1.11 | 2026-08-09 | 生成失敗誤判 auth + awaiting_reply 卡住修復 |
+| 1.1.10 | 2026-08-09 | `_md_to_html` 擴充斜體/刪除線/引用 |
+| 1.1.9 | 2026-08-08 | 多組架構訊息路由缺陷修復（fish 實戰回報）|
+| 1.1.8 | 2026-08-08 | 重啟自動觸發：多 leader 不挑第一個 + 靜默重啟 |
+| 1.1.7 | 2026-08-08 | ToolTracker 版面人性化（單行階段摘要）|
+| 1.1.6 | 2026-08-07 | P2P 通報改發 General + 多 leader/admin 架構 |
+| 1.1.5 | 2026-08-07 | Telegram UX：分段/HTML正規化/通報衛生 |
+| 1.1.4 | 2026-08-07 | `wiki_query` 多櫃子掃描 + not-found 診斷 |
+| 1.1.3 | 2026-08-07 | 硬編碼治理 Wave 3：skip_resume/template/validate/CI |
+| 1.1.2 | 2026-08-06 | 硬編碼治理 Wave 2：決策系統去硬編碼 |
+| 1.1.1 | 2026-08-06 | 硬編碼治理 Wave 1：火影/general_topic/agent.json |
+| 1.1.0 | 2026-08-06 | Group Topic Routing + TEAM.md policy once |
+| 1.0.5 | 2026-08-06 | Topic 持久化 + BRAIN/CODE 鷹架 |
+| 1.0.4 | 2026-08-05 | 安全性：路徑白名單 + 封閉檢查；cron 完整支援 |
 | 1.0.3 | 2026-07-31 | startup 通報去重 |
-| 1.0.2 | 2026-07-31 | `chat_router` 動態找 leader/admin；`api.py` 補 import |
-| 1.0.1 | 2026-07-31 | wiki_ingest 路徑、scheduler race、LLM retry 等 7 項修正 |
-| 1.0.0 | 2026-07-31 | 初始版本：Decision Loop、TG UX、8 種意圖分類、10 agents |
+| 1.0.2 | 2026-07-31 | `chat_router` 動態找 leader/admin |
+| 1.0.1 | 2026-07-31 | wiki_ingest/scheduler/LLM retry 等 7 項修正 |
+| 1.0.0 | 2026-07-30 | 初始版本：Decision Loop、TG UX、8 種意圖分類 |
 
 ---
 
