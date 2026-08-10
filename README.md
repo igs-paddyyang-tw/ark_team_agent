@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.13-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.4-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.1.13/ark_team_agent-1.1.13-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.4/ark_team_agent-1.2.4-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.1.13/ark_team_agent-1.1.13-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.4/ark_team_agent-1.2.4-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -158,6 +158,11 @@ if __name__ == "__main__":
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.4** | 2026-08-10 | N5-B1 內建記憶治理 `_builtin:memory-consolidate`（機械歸檔，無 LLM）|
+| 1.2.3 | 2026-08-10 | 修 TG 出口 ANSI 殘留（reply() 路徑 _strip_ansi）|
+| 1.2.2 | 2026-08-10 | N4 Session 派工脈絡（多輪續問注入上一步派工）|
+| 1.2.1 | 2026-08-10 | 修 /start Web Dashboard URL（寫死 23030 → health_port+300）|
+| 1.2.0 | 2026-08-10 | 整合升級：task_prefix/suffix、knowledge_search_order、health alive、Reply Template |
 | **1.1.13** | 2026-08-10 | `send_to_instance` peer-reply timeout 語意優化 |
 | 1.1.12 | 2026-08-10 | 治本 agent 程式碼誤判 + 生成失敗/崩潰觀測 |
 | 1.1.11 | 2026-08-09 | 生成失敗誤判 auth + awaiting_reply 卡住修復 |

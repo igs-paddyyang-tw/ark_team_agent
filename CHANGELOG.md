@@ -6,6 +6,26 @@
 
 ---
 
+## [1.2.4] — 2026-08-10
+
+- N5 Phase B1：內建 `_builtin:memory-consolidate`（各 agent daily log >14 天搬 archive/、memory.md 超標記 degraded；純機械、無 LLM、非破壞性）。
+
+## [1.2.3] — 2026-08-10
+
+- 修 TG 出口 ANSI 殘留：`reply()` 路徑新增 `_strip_ansi`，套 `_send_to_topic`/`_send_to_private` 最終出口。
+
+## [1.2.2] — 2026-08-10
+
+- N4 Session 派工脈絡：`_last_dispatch` + `/api/send` 記錄/注入；`communication.dispatch_context_ttl_minutes`（30，0=關）。
+
+## [1.2.1] — 2026-08-10
+
+- 修 `/start` Web Dashboard URL：寫死 23030 → 動態 `health_port+300`；僅在 team-website 存在時顯示。
+
+## [1.2.0] — 2026-08-10
+
+- 整合升級（全 additive）：per-instance `task_prefix/suffix`、`knowledge_search_order`、`/api/health` 增 `alive`、Reply Template System（6 具名模板）。
+
 ## [1.1.13] — 2026-08-10
 
 ### 新增
