@@ -6,6 +6,16 @@
 
 ---
 
+## [1.2.7] — 2026-08-11
+
+- **取經整合（借鏡 ninja / hoyeah）**：
+  - CI 反模式掃描：`.parent` 層數推導、套件位置反推 `team.yaml`、錯誤分類裸 HTTP 數字、寫死 `host:port`（+ docstring 追蹤，不誤判說明文字）。
+  - 新增 `_builtin:output-ttl`：依 BRAIN.md TTL 掃 `output/`，超期記 `degraded[output_ttl_overdue:N]`（只提醒不刪，無超期自癒）。
+  - Skill 自薦：ToolTracker 步數 ≥ `SKILL_HINT_STEPS`(12) 時提示可沉澱為 Skill。
+  - Chat trace：新增 `EventType.ROUTE`，記錄路由決策（action / 目標 agent / 來源 user）。
+- **修 ToolTracker 步數低報**：原取 `len(_lines)`（受 `_MAX_LINES=8` 截斷）→ 長任務一律顯示 8；改用 `_total_steps` 真實累計。
+- 文件：新增「模型分工」成本優化 pattern（快模型路由／強模型幹活，零程式）。
+
 ## [1.2.6] — 2026-08-10
 
 - **修專案根定位缺陷（pip 安裝環境失效）**：原 `Path(__file__).parent.parent.parent` 在安裝後指到 `.venv/lib/python3.x` 且不拋例外。

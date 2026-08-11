@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.6-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.7-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.6/ark_team_agent-1.2.6-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.7/ark_team_agent-1.2.7-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.6/ark_team_agent-1.2.6-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.7/ark_team_agent-1.2.7-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -179,11 +179,27 @@ if __name__ == "__main__":
 | `multi_user` | instance (admin) | per-user session 隔離（`max_user_sessions` / `session_idle_timeout_minutes`）|
 | `cost_guard.per_instance_limits` | 頂層 | 各 agent 獨立日預算，超限只暫停該 agent |
 
+### 模型分工（成本優化 pattern，零程式）
+
+借鏡「快模型路由／強模型幹活」的做法 —— 用既有的 per-instance `model` 設定即可，不需額外 LLM router：
+
+```yaml
+instances:
+  entry-agent:            # 入口／路由：判斷意圖、分流，工作輕
+    model: auto           # 或指定較快/較便宜的模型
+  architect-agent:        # 重推理：架構設計、可行性評估
+    model: claude-opus-4.6
+    model_failover: [claude-sonnet-4.6]   # 主模型不可用時降級
+```
+
+入口 agent 每則訊息都會被喚醒，用快模型可明顯降低成本；重推理 worker 才用強模型。
+
 ### `scheduler.yaml` 內建 job
 
 | `target` | 說明 |
 |------|------|
 | `_builtin:spec-validator` | Code ↔ Spec 一致性驗證（drift report）|
+| `_builtin:output-ttl` | Output 超期提醒：依 BRAIN.md 分類 TTL 掃 `output/`，超期記 `degraded`（**只提醒不刪**）v1.2.7+ |
 | `_builtin:memory-consolidate` | 記憶治理：`memory/daily/*.md` >14 天搬 `archive/`、`memory.md` 超標記 `degraded`（純機械、無 LLM、非破壞性）v1.2.4+ |
 
 ### 健康端點
@@ -208,6 +224,7 @@ if __name__ == "__main__":
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.7** | 2026-08-11 | 取經整合：CI 反模式掃描、`_builtin:output-ttl`、Skill 自薦提示、chat trace；修 ToolTracker 步數低報 |
 | **1.2.6** | 2026-08-10 | 修專案根定位缺陷（pip 環境失效）：`paths.py` 哨兵搜尋、`task_screenshot.py` 入套件、scheduler `project_root` 注入 |
 | **1.2.5** | 2026-08-10 | TG 五指令目標明確化（/help 新增、/restart 確認鍵、/start 顯示 ID + 授權狀態）|
 | **1.2.4** | 2026-08-10 | N5-B1 內建記憶治理 `_builtin:memory-consolidate`（機械歸檔，無 LLM）|
