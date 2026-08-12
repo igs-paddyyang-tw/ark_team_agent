@@ -6,6 +6,29 @@
 
 ---
 
+## [1.2.10] — 2026-08-12
+
+- **templates/skills 更新**：
+  - 新增 `ark-html-report`（單檔 HTML 報告，5 風格 token + 17 元件）+ `ark-md-report`（結構化 MD 報告，與 html-report 成對）。新建 agent 自動獲得。
+  - 移除 `ark-daily-decision-digest` + `ark-policy-translate`（nana Decision Loop 專屬，子專案不需要）。根治「重啟後被重新部署」問題。
+- 版本 1.2.9 → 1.2.10。
+
+## [1.2.9] — 2026-08-11
+
+- **修 v1.2.7 引入的 UnboundLocalError（生產回歸）**：`telegram.py::_on_message` 函式內 `from .event_log import get_event_log` shadow 模組層同名 → 整條 TG 訊息路徑爆掉。修：移除函式內 import + AST 回歸測試。
+- **`log_to_leader` 顯示代號**：原印 `🔒 [sec-agent]`（raw instance 名），改走 `_CODENAMES` + `_md_to_html`，所有團隊受益。
+- **補實作 4 個 API 端點**（drift 歸零）：`DELETE /api/dashboard/board/{task_id}`、`GET /api/dashboard/costs/trend`、`GET /api/dashboard/timeline`、`WS /ws/events`。
+
+## [1.2.8] — 2026-08-11
+
+- **code-spec-validator 假警報修正（57%→0）**：
+  - 解析 `APIRouter(prefix=)`：22/54 drift 原因是同批端點被重複計成 missing+extra。
+  - 排除 `templates/` 目錄掃描。
+  - 註解行不計為路由/前綴。
+  - 測試維度只取未勾選 `- [ ]` + 跳過 `docs/reports/` + CJK 依標點分段。
+- **新增 `docs/references/api-endpoints.md`**：45 端點單一真相表（由 code 掃描產生）。
+- Drift score 54→0，API 維度 0→100，總分 56→79。
+
 ## [1.2.7] — 2026-08-11
 
 - **取經整合（借鏡 ninja / hoyeah）**：
