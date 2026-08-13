@@ -8,16 +8,38 @@
 
 ## [1.2.12] — 2026-08-13
 
-- **skills 範本進版控 + sync 下發機制**：templates/skills 改由 canonical 庫（ark-agent-skills repo）同步，init 時自動下發 core skills。
-- **audit empty-skill-dir 規則**：audit_skills.py 新增 P2 規則，攔截空殼目錄。
-- **對齊 canonical 庫**：全庫 schema_version:1 + category canonical（7 全名詞彙）。
+> 內建 skill 的**版控、下發、對齊、打包**四個環節一次補齊。原定 1.2.11 的崩潰鑑識未單獨發佈，併入本版。
 
-## [1.2.11] — 2026-08-12
+### 內建 skill（11 個）
 
-- **崩潰鑑識強化**：
-  - 崩潰記錄含 returncode + 輸出尾巴 + 退出碼分類器。
-  - asyncio 負退出碼正確辨識（非 OOM）。
-  - SIGKILL≠OOM 易錯前提修正。
+- **範本全數進版控**：`templates/skills/` 原有 **29 / 95 檔未進 git**（含 `ark-agent-cli`、`ark-news-daily`、`ark-telegram-sender` 三個完整 skill，以及 `wiki_guard.py`、`wiki_taxonomy.py`、`loop-rules.md`、各 skill `evals.json`、superpowers hooks 與 13 份 fixtures）。未追蹤數 **29 → 0**，換機 clone 後建出的 wheel 內容自此一致。
+- **新增 `skills_policy: sync`**（`once` 仍為預設，既有行為不變）：
+  - 逐檔比對**內容**（`filecmp.cmp(shallow=False)`；`copytree` 會保留 mtime，比 stat 會漏）
+  - 有差異才覆寫、缺檔補上；**不刪除** agent 自行新增的檔案（不套 `rsync --delete` 語意）
+  - 未知 policy 值（如 `snyc`）**發 WARNING** 再退回 `once`，不靜默退化
+  - bundled 與 `skills_source` 自訂來源皆適用
+  - ⚠️ **既有部署要吃到 skill 內容更新，須在 `team.yaml` 加 `kiro_files.skills.policy: sync`**；維持 `once` 只會補「新增的 skill」，不會更新既有內容。
+- **對齊 canonical 庫**：5 份 SKILL.md 更新，`metadata.schema_version` + `category` 齊備度 **8/11 → 11/11**。
+- `templates/skills/README.md` 不再被當成 skill 部署。
+- **audit empty-skill-dir 規則**：`audit_skills.py` 新增 P2 規則，攔截空殼目錄。
+
+### 打包正確性
+
+- **`build_release.py` 打包前清 `build/`**：setuptools 只把新檔**複製**進 `build/lib`，**不刪除**來源已消失的檔案。實測 `build/lib` 停在 2026-07-31 → 自那之後每個 wheel 都夾帶 v1.0.5 就已刪除的 `ark-daily-decision-digest` 與 `ark-policy-translate`。
+- **新增 `verify_wheel_skills()`**：打包後比對 wheel 內 skill 集合與來源，**多一個或少一個就中止發版**。夾帶錯誤 skill 不會讓打包失敗，只會安靜地把廢止 skill 發到每個團隊。
+- 本版 wheel 實測 **11 / 11 一致**。
+
+### 崩潰鑑識（原定 1.2.11，未單獨發佈）
+
+- 崩潰偵測處記 `proc.returncode` + `capture(200)`（截 1500 字）進 log 與 `EventType.CRASH` 的 detail；鑑識失敗不影響重啟。
+- 新增 `Daemon.classify_exit(rc, intentional=)`：
+  - asyncio subprocess 被訊號殺是**負數**（`-9`），非 shell 的 `128+N`（137）→ `137` 視為自行退出
+  - `-9` 僅標「**疑似** OOM，請查 `dmesg`」不斷言（SIGKILL ≠ OOM）
+  - `-11` SIGSEGV、`rc>0` 自行退出、`rc=0` 正常結束
+- **主動停止旗標 `InstanceState._stopping`**（`stop` 設、`start` 清）：`terminate()/kill()` 是 `-15/-9`，不標記會讓每次 `systemctl restart` 產生**假 OOM**。
+- **`/api/status` 暴露 `last_exit_code` / `last_exit_cause`**。
+
+測試：**922 passed / 6 skipped / 0 failed**。
 
 ## [1.2.10] — 2026-08-12
 

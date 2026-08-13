@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.10-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.12-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -224,6 +224,10 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.12** | 2026-08-13 | 內建 skill 版控補齊（範本未追蹤 29→0）、`skills_policy: sync` 下發、對齊 canonical 庫（metadata 11/11）、打包前清 `build/` + wheel skill 集合驗證；併入原 1.2.11 崩潰鑑識 |
+| 1.2.10 | 2026-08-12 | templates/skills 新增 html-report + md-report、移除 decision-digest + policy-translate |
+| 1.2.9 | 2026-08-11 | 修 v1.2.7 引入的 UnboundLocalError 生產回歸 + log_to_leader 代號 + 4 端點補實作 |
+| 1.2.8 | 2026-08-11 | code-spec-validator 假警報 57%→0、API 端點參考文件（45 端點）|
 | **1.2.7** | 2026-08-11 | 取經整合：CI 反模式掃描、`_builtin:output-ttl`、Skill 自薦提示、chat trace；修 ToolTracker 步數低報 |
 | **1.2.6** | 2026-08-10 | 修專案根定位缺陷（pip 環境失效）：`paths.py` 哨兵搜尋、`task_screenshot.py` 入套件、scheduler `project_root` 注入 |
 | **1.2.5** | 2026-08-10 | TG 五指令目標明確化（/help 新增、/restart 確認鍵、/start 顯示 ID + 授權狀態）|
