@@ -6,6 +6,19 @@
 
 ---
 
+## [1.2.12] — 2026-08-13
+
+- **skills 範本進版控 + sync 下發機制**：templates/skills 改由 canonical 庫（ark-agent-skills repo）同步，init 時自動下發 core skills。
+- **audit empty-skill-dir 規則**：audit_skills.py 新增 P2 規則，攔截空殼目錄。
+- **對齊 canonical 庫**：全庫 schema_version:1 + category canonical（7 全名詞彙）。
+
+## [1.2.11] — 2026-08-12
+
+- **崩潰鑑識強化**：
+  - 崩潰記錄含 returncode + 輸出尾巴 + 退出碼分類器。
+  - asyncio 負退出碼正確辨識（非 OOM）。
+  - SIGKILL≠OOM 易錯前提修正。
+
 ## [1.2.10] — 2026-08-12
 
 - **templates/skills 更新**：
