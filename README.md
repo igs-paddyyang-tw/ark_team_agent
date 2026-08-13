@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.14-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.15-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.14/ark_team_agent-1.2.14-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.15/ark_team_agent-1.2.15-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.14/ark_team_agent-1.2.14-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.15/ark_team_agent-1.2.15-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.15** | 2026-08-13 | 修 1.2.14 的 `mcp_undeclared_moved` 假警報沒修乾淨（只分類本次搬移 → 舊 `_disabled` 條目永遠被誤報）|
 | **1.2.14** | 2026-08-13 | 崩潰迴圈治理（`max_retries` 被活動偵測歸零 → 改時間窗計數 + 遞增冷卻 + 會停手）、MCP 啟動觀測（`rc=3` 正確歸因為 MCP 失敗、外部全域 server 落差可見化）、修 1.2.13 的 `mcp_undeclared_moved` 假警報 |
 | **1.2.13** | 2026-08-13 | MCP 設定治理：啟動前預檢（單一壞 server 不再擊倒 agent）、`team.yaml` 宣告 `mcp_servers` / `defaults.mcp` / `mcp_exclude`、`env` 經 wrapper 生效、未宣告者移至 `_disabled` |
 | **1.2.12** | 2026-08-13 | 內建 skill 版控補齊（範本未追蹤 29→0）、`skills_policy: sync` 下發、對齊 canonical 庫（metadata 11/11）、打包前清 `build/` + wheel skill 集合驗證；併入原 1.2.11 崩潰鑑識 |
