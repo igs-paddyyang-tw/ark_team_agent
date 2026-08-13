@@ -6,6 +6,62 @@
 
 ---
 
+## [1.2.13] — 2026-08-13
+
+> MCP 設定治理。規格／設計／計畫／驗收四份文件見 nana repo 的
+> `docs/{specs,designs,plans,reports}/2026-08-13-mcp-*`。
+
+**根因：`cfg.mcp_servers` 從來沒有人填值，是死程式碼。** 全套件只有宣告與消費兩處提及它，
+`config.py` 零解析 → 自訂 MCP 只能手改 `.kiro/settings/mcp.json`，而該檔 `policy=always`
+每次啟動被重寫。疊上 `--require-mcp-startup`（「**任一** server 失敗即 **exit 3**」），
+一個壞條目就讓整個 agent 起不來。
+
+### 可用性（P0）
+
+- **啟動前預檢**：`command` 解析不到、或 `args` 內以 `/` 開頭的路徑不存在 → **剔除該 server
+  並繼續啟動 agent**，記入 `degraded[]`。不移除 `--require-mcp-startup`（移除等於把
+  all-or-nothing 換成 nothing-guaranteed —— MCP 全掛也「啟動成功」）。
+- **`command` 絕對路徑解析**：venv/bin → `which` → **找不到就明確失敗**（systemd 的
+  `PATH` 不含 venv/bin；fallback 只會把問題延後成難歸因的 exit 3）。
+- **`mcp.json` 原子寫入**（tmp + `os.replace`）；寫入被中斷不再留半截 JSON。
+- **壞檔備份** `mcp.json.corrupt-<ts>` 再重建（原本靜默覆蓋）。
+- wrapper 改用 `shlex.quote`（原本 `command` **完全未引用**，含空格的路徑會壞）。
+
+### 宣告式設定（P1）
+
+```yaml
+defaults:
+  mcp: [kibana]                   # 全體預設掛載
+mcp_servers:
+  kibana:
+    command: mcp-server-kibana    # 相對值 → 絕對路徑
+    env: { KIBANA_URL: "${KIBANA_URL}" }   # 經 wrapper 生效（Kiro 忽略 mcp.json 的 env）
+  fetch: { enabled: false }       # 內建 server 亦可停用（不記 degraded）
+instances:
+  sre-agent:
+    mcp: [github]                 # 與 defaults 取聯集
+    mcp_exclude: [kibana]         # 例外
+```
+
+- 掛載 = `(defaults.mcp ∪ instance.mcp) − mcp_exclude`（**union 非覆寫**）。
+- `${VAR}` 缺值或空值 → **不部署該 server** + `mcp_unresolved_env`
+  （空 token 會「啟動成功但所有呼叫失敗」，是最難查的靜默失敗）。
+- `mcp` / `mcp_exclude` 引用未宣告名稱 → **啟動即擋**。
+
+### 宣告即真相（P2）
+
+- 未宣告的 server 移至 `mcp.json` 的 `_disabled`（**不刪除**，`autoApprove` 完整保留），
+  **永久保留 + 常駐提醒**，補進 `team.yaml` 即回歸。
+- 只在 `team.yaml` 真的有 `mcp_servers` 宣告時才修剪 —— 未宣告的既有部署零影響。
+
+### 升級注意
+
+- 既有部署**不加** `mcp_servers` → 行為僅多出預檢驗證，其餘不變。
+- 要加 `mcp_servers` 時，**必須同時宣告該部署現有的所有手寫 server**，否則會落入
+  `_disabled`（可完整還原，但當下少工具）。
+
+測試：+36（AC-001~AC-018 全覆蓋），全量 958 passed / 6 skipped / 0 failed。
+
 ## [1.2.12] — 2026-08-13
 
 > 內建 skill 的**版控、下發、對齊、打包**四個環節一次補齊。原定 1.2.11 的崩潰鑑識未單獨發佈，併入本版。

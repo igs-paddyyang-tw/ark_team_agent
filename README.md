@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.12-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.13-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.12/ark_team_agent-1.2.12-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.13/ark_team_agent-1.2.13-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.12/ark_team_agent-1.2.12-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.13/ark_team_agent-1.2.13-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.13** | 2026-08-13 | MCP 設定治理：啟動前預檢（單一壞 server 不再擊倒 agent）、`team.yaml` 宣告 `mcp_servers` / `defaults.mcp` / `mcp_exclude`、`env` 經 wrapper 生效、未宣告者移至 `_disabled` |
 | **1.2.12** | 2026-08-13 | 內建 skill 版控補齊（範本未追蹤 29→0）、`skills_policy: sync` 下發、對齊 canonical 庫（metadata 11/11）、打包前清 `build/` + wheel skill 集合驗證；併入原 1.2.11 崩潰鑑識 |
 | 1.2.10 | 2026-08-12 | templates/skills 新增 html-report + md-report、移除 decision-digest + policy-translate |
 | 1.2.9 | 2026-08-11 | 修 v1.2.7 引入的 UnboundLocalError 生產回歸 + log_to_leader 代號 + 4 端點補實作 |
