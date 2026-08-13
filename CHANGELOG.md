@@ -6,6 +6,51 @@
 
 ---
 
+## [1.2.14] — 2026-08-13
+
+### 崩潰迴圈治理（P3）
+
+> **`max_retries` 在有活動的迴圈裡永遠到不了。** 它是「**連續**失敗」上限，但 health loop
+> 的活動偵測是「有新 output → `crash_count = 0`」——「崩潰 → 重啟 → 印啟動訊息
+> （**就是 output**）→ 再崩潰」的迴圈中，計數每次被歸零。
+>
+> 實測 director 2026-07-31~08-12 累積 **2421 筆 crash**（峰值 846/日），
+> **每一筆 detail 都是 `crash_count=1`** —— 計數被歸零的直接證據。
+
+- **改以時間窗計數**（與活動偵測無關）：`RestartPolicy` 新增 `crash_window_minutes`(60) /
+  `max_crashes_per_window`(5) / `max_cooldowns`(3)。窗內達門檻即判迴圈，**不等** `max_retries`。
+- **冷卻遞增** `600s × 2^(n-1)`，上限 1 小時（原固定 10 分鐘）。
+- **超過 `max_cooldowns` → 停止自動重啟**（`halted`）+ `degraded` + event + 通報。
+- 冷卻結束只清 `crash_count`，**不清窗內記錄** —— 清了等於讓迴圈原地復活。
+- 人工介入的唯一訊號是 `stop_instance`（自動重啟只呼叫 `start_instance`）→ 在此解除
+  `halted`，否則被停手的 agent 連人工 restart 都起不來。
+- `/api/status` 增 `lifetime_crashes` / `crashes_in_window` / `cooldown_count` / `halted`。
+
+### MCP 啟動觀測（P4）
+
+> 現場（2026-08-13 15:08）：`rc=3` 被歸因為「多為上游/API 錯誤」，實際是
+> `Error: One or more MCP servers failed to start`。且 Kiro 說 **7 個** server，
+> 套件寫進該 agent 的只有 4 個 —— 差額來自**全域** `~/.kiro/settings/mcp.json`，
+> 不在套件管轄內，預檢管不到。
+
+- 新增 `KiroBackend.mcp_progress()` / `has_mcp_startup_failure()`：解析 Kiro 自印的
+  `k of m mcp servers initialized`（取最後一筆、先清 ANSI）。
+- **`rc=3` 正確歸因**：有 MCP 證據時 `last_exit_cause` 改為
+  `mcp-startup-failed（初始化到第 k/m 個 server 就失敗）`+ `degraded`；無證據則不動。
+- **啟動耗時**：spawn→ready 秒數，超 `startup_timeout_ms` 50% 記 `slow_startup`。
+  MCP server 由 Kiro 生，**無法逐一計時**，總時長是唯一可得的代理指標。
+- **外部 server 落差**：載入數 > 宣告數+2 → `degraded["mcp_external_servers:{name}:{n}"]`。
+- `/api/status` 增 `last_startup_seconds` / `mcp_loaded` / `mcp_declared`。
+
+### 修 1.2.13 的假警報
+
+- `mcp_undeclared_moved` 會把「已由宣告取代」的舊條目誤報為未宣告：宣告式 key 是
+  `{server}-{instance}`、升級前手寫的是 `{server}`。現在 `_reason` 標「已由宣告取代」
+  且**不計入**提醒，只報真缺口。
+
+測試：+23（`test_crash_loop` 11 / `test_mcp_startup_observability` 10 / `test_mcp_prune` +2），
+全量 **981 passed / 6 skipped / 0 failed**。
+
 ## [1.2.13] — 2026-08-13
 
 > MCP 設定治理。規格／設計／計畫／驗收四份文件見 nana repo 的
