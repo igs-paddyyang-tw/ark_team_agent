@@ -6,6 +6,70 @@
 
 ---
 
+## [1.2.21] — 2026-08-14
+
+### MCP 宣告機制首度啟用 —— 並修掉三個讓它「宣告了沒用」的缺陷
+
+`mcp_servers` 宣告機制 1.2.13 就做好了。實況比「都沒用」複雜一些：
+**aiops 早就宣告了**（github / kibana，1.2.13 升級時一併搬入），
+**nana 與 director 從沒宣告過任何 server** —— director 的 team.yaml 甚至
+明確寫了「本團隊不宣告」的註解。本次補的是 nana。
+實測 agents **完全沒有**繼承 `~/.kiro/settings/mcp.json` 的 7 個 server ——
+cgroup 內只有 `team_mcp` × 11。那些 server 只服務使用者自己的 kiro session，
+所以 agent 的 `openai` / `github` 等能力一直是缺的。
+
+啟用時撞到三個缺陷：
+
+#### ① 宣告的 `fetch` 被硬編預設**靜默覆蓋**
+
+`_write_mcp_config` 的 elif 鏈會無條件覆蓋 `servers["fetch"]`，
+所以 `mcp_servers.fetch` 的宣告寫了完全沒用，也沒有任何警示。
+
+修法：宣告存在時跳過硬編分支。判斷條件要同時認 `cfg.mcp_servers`
+與 **per-instance key**（`fetch-<instance>`）—— 宣告的 server 是用後者存的
+（wrapper script 逐 instance 產生），只判斷 `"fetch"` 永遠是 False。
+
+#### ② 兩份 fetch 並存 —— 11 個 agent 跑出 22 個 fetch 進程
+
+`servers` 是從既有檔案讀進來的，光「不覆蓋宣告」不夠，得主動清掉舊的硬編條目。
+沒清之前一半的進程是壞的那份，還會繼續觸發 `rc=3`。
+
+#### ③ 預檢漏掉「env 內的路徑」
+
+原本只檢查 `command` 與 `args` 裡的絕對路徑。實測 bigquery 的
+`GOOGLE_APPLICATION_CREDENTIALS` 指向不存在的檔案 —— server 起得來、
+Kiro 回報成功，但**所有呼叫都會失敗**。這正是 ADR-004 要消滅的靜默失敗
+（當時只防空 token，沒防壞路徑）。現在 env 值若是不存在的絕對路徑就不部署。
+
+### 順帶修好 `fetch`（rc=3 的真正原因）
+
+`uvx mcp-server-fetch` 目前起不來：上游把 `McpError` 改名 `MCPError`，
+與快取的 `mcp` SDK 版本歪斜。`uvx --refresh` 無效，必須釘住舊 SDK：
+`--with 'mcp<1.15'`。這就是 architect-agent 出現
+`rc=3 mcp-startup-failed（初始化到第 1/2 個 server 就失敗）` 的來源。
+
+⚠️ **aiops／director 尚未宣告 fetch，它們的 fetch 仍是壞的那份。**
+
+### nana 的宣告內容
+
+| server | 授予 | 說明 |
+|--------|------|------|
+| `fetch` | 全員（`defaults.mcp`）| 釘住 SDK 的版本；原本就是全員給，只是壞的 |
+| `openai` | ark-agent · ai-dev-agent | LLM 整合 |
+| `github` | cto · coder · architect | 套件維護、實作、審核 |
+| `kibana` | cto-agent | 服務監控 |
+
+**未宣告**（前置條件不存在，宣告了只會產生 degraded 雜訊）：
+`grafana`（腳本目錄整個不在）、`bigquery`（憑證檔不存在）。
+兩者在全域設定裡都還留著，但那份設定早已過時。
+
+密鑰一律 `${VAR}` + 值放 `.env`（`team.yaml` 有版控，不可寫明文）。
+
+**成本**：MCP 進程 130 → 162 個、11.7 → 13.2 GB（+1.5 GB）。
+用 per-instance 白名單控制，不是每個 agent 都給。
+
++7 測試。全量 1116 → 1122 passed。
+
 ## [1.2.20] — 2026-08-14
 
 ### 多使用者 Session 隔離治理（M1–M3）
