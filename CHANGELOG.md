@@ -6,6 +6,129 @@
 
 ---
 
+## [1.2.20] — 2026-08-14
+
+### 多使用者 Session 隔離治理（M1–M3）
+
+盤點 `multi_user` 機制時發現四類問題。**功能至今未啟用** ——
+三個部署的 `team.yaml` 都沒有 `multi_user: true`，磁碟上 0 個 session 目錄。
+所以缺陷是潛在而非正在發生，但也因此**現在修的成本最低**（零遷移）。
+
+文件：`docs/specs`／`designs`／`plans` 的 `2026-08-14-multi-user-session-isolation-*`
+
+#### M1 表示法地基 —— 分隔符 `#` → `~`
+
+`#` 是 URL fragment 分隔符，而 `api.py` 有兩個端點以路徑參數收 instance 名
+（`/api/output/{name}`、`/api/instances/{name}/restart`）。實測：
+
+```
+/api/output/admin-agent#937896656
+  → server 收到 path='/api/output/admin-agent'  fragment='937896656'
+```
+
+`user_id` 整段丟失，**且不報錯** —— 操作靜默打到 base instance。
+
+改用 `~`（RFC 3986 unreserved）。它是唯一 URL／POSIX／Windows **三邊都安全**的
+選擇：`#` 在 Windows 檔名合法但 URL 危險，`:` 恰好相反。
+
+新增 `SessionKey`（frozen dataclass），分隔符只在該模組出現一次。
+刻意**不繼承 `str`** —— 繼承後任何字串操作都不報錯，等於保留了要消除的誤用空間。
+
+新增 `Daemon.entity_instances()` / `session_instances()` 單一出口，
+9 處執行期列舉改用它（TEAM.md 成員表、可派工對象、manager 通知、TG 清單、
+`broadcast_all`、`general_topic` 掃描）。原本 28 處列舉只有 2 處記得過濾 ——
+與 1.2.16 的 IDLE 事故同型（用 enum grep 盤點，漏掉 4 處字串字面值比對）。
+所以這次改用**掃描測試**守門，不靠 grep。
+
+#### M2 上限與驗證 —— 修掉一個「看起來有保護」的設定
+
+`config.py` 宣告 `max_user_sessions: int = 5`，`resolve_session()` 也如實呼叫
+`_enforce_session_limit()`，但那個函式的實作是 `return`。
+每個 session 是一個獨立 kiro-cli 子進程 → 啟用後使用者數就是進程數。
+**比「沒有上限」更糟**：讀設定的人會以為安全。
+
+`AWAITING_REPLY` **永不回收** —— 那代表有使用者正在等這個 agent 回話。
+這是 1.2.16 引入 `IDLE` 的價值兌現處：在那之前「回覆完」與「有人在等」
+都是 `AWAITING_REPLY`，**無法區分，也就無法安全回收**。
+受保護但仍佔額度；全部都在等回覆時放行超額並留 warning。
+
+新增 `ark-team-agent sessions [--purge]` 盤點無主 session 目錄，
+**預設只報告不刪除** —— 誤刪的代價是使用者的對話歷史。
+
+#### M3 per-user 工作區隔離 —— 隔離的是資料，不只是對話
+
+`resolve_session()` 原本只做 `replace(ic, name=key, multi_user=False)`，
+**`working_directory` 與本體完全相同**：
+
+```
+base  wd=agents/admin-agent
+user  wd=agents/admin-agent      ← 相同
+```
+
+所有使用者的 `memory/journal.md`、`memory/daily/` 都寫進同一個目錄。
+
+現在每個 session 有 `<base_wd>/sessions/<uid>/`：`memory/` 獨立、
+`.kiro/steering/*.md` 首次**複製**繼承（不是 symlink）、**不建立** `knowledge/`。
+
+不建 `knowledge/` 不只是省磁碟 —— 空目錄會**誘導 agent 往裡面寫**，
+而 `wiki_query` 查的是本體的知識庫，寫進去的知識誰也查不到。
+
+> 注意範圍：**套件層**的 per-user 記憶（`memory.py` → `memory/user_<uid>.md`）
+> 本來就是隔離的，本次不動。
+
+### 修正 1.2.19 留下的 2 個紅測試
+
+1.2.19 把 `agents_md` policy 加回來（語意不同：為非 Kiro agent 產生根目錄導覽檔），
+卻沒更新 1.2.18 寫的「死設定已移除」守門測試 → `test_dead_policies_removed` 與
+`test_legacy_yaml_with_removed_keys_still_parses` 兩個測試在 HEAD 上是紅的。
+
+### 修正本版自己造成的回退
+
+M2 的 commit 把另一個 session 剛加的 `telegram:` → `channel:` 別名回退掉了
+（`config.py` 一行）。根因是**共用 working tree**：對方的 commit 已進遠端，
+但磁碟檔案落後於它，我 `git add` 磁碟版就把功能刷掉了 ——
+BRAIN.md 第一鐵律記載的失效模式，這次犯的人是我。已復原別名與對應的 2 個測試。
+
+> 順帶：`cli.py` 被我從 CRLF 正規化成 LF（`read_text`/`write_text` 的
+> universal newlines 副作用）。內容無損，但那次 diff 多出 2000+ 行雜訊。
+
+### N5 記憶治理補完 —— 機制早就有，但從沒啟用過
+
+`_builtin:memory-consolidate` 在 **1.2.4** 就實作了，`examples/scheduler.yaml`
+也有範例，但**三個部署的 `scheduler.yaml` 都沒有它** —— 從沒執行過一次。
+（與 `mcp_servers` 同型：機制做好但沒啟用。）
+
+而且它管的東西不對：處理 `memory/daily/*.md`（實測只有 3 個檔）與
+`memory/memory.md`（45 行），但**沒管 `.kiro/steering/MEMORY.md`** ——
+那才是 **always-on 載入**、每次對話都吃 context 的檔案（ark-agent 636 行 / 36 KB、
+pm-agent 626 行 / 66 KB），而它自己開頭就寫著「> 2 週的段落移到 knowledge/」。
+
+新增 `memory_archive.py`：把 `## YYYY-MM-DD` 分節中超過 14 天的搬到
+`knowledge/raw/memory-archive/YYYY-MM.md`，原處留指標。
+
+**確定式，不用 LLM** —— 這是搬移不是摘要，分節有結構、日期比對是機械的。
+LLM 會引入「摘要漏掉重要事實」的風險，搬移只要「歸檔寫成功才動原檔」
+就零資訊損失（已用 439 行逐行比對驗證）。
+
+安全設計：只動日期分節（`## 專案快照`／`## 待辦` 這類當前狀態絕不碰）、
+先寫歸檔再改原檔、append 不覆寫、`min_bytes=8000` 門檻
+（10 個 agent 只有 2 個超標，對 9 行的檔案硬歸檔只會變吵）。
+
+已啟用於三邊 `scheduler.yaml`（每週日 03:30）。
+實跑 ark-agent：636 → **456 行**（−31%），12 段歸檔。
+
++21 測試（重點在「不該動什麼」）。
+
+### 測試
+
+1024 → **1115 passed** / 6 skipped（+91：SessionKey 26、上限 22、隔離 18、
+記憶歸檔 21，另修復 2 個紅測試）。
+
+> ⚠️ **M4 實機驗證尚未執行**（`docs/plans/…-plan.md` 的 4.2／4.3）。
+> 需臨時開啟 `multi_user` 驗三件事：衍生 wd 下 `.kiro/` 能否完整產生、
+> 複製 steering 後 kiro-cli 能否載入人格、回收後 `--resume` 能否接回對話。
+> 1.2.19 剛踩過「16 個單元測試全綠但實機全錯」，這步不可省。
+
 ## [1.2.19] — 2026-08-14
 
 ### `AGENTS.md` 成為規範主文件，放在**工作區根目錄**

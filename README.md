@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.19-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.20-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.19/ark_team_agent-1.2.19-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.20/ark_team_agent-1.2.20-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.19/ark_team_agent-1.2.19-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.20/ark_team_agent-1.2.20-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.20** | 2026-08-14 | 多使用者 session 隔離治理（分隔符 `#`→`~`、`max_user_sessions` 空殼補實作、per-user 工作區隔離）+ N5 記憶治理啟用（`steering/MEMORY.md` 日期分節歸檔）|
 | **1.2.19** | 2026-08-14 | 各 agent 根目錄產生 `AGENTS.md` 導覽檔（非 Kiro 工具不讀 `.kiro/steering/`，進目錄後沒入口）+ 工作區缺漏目錄自動補齊 |
 | **1.2.18** | 2026-08-14 | 移除 `steering/AGENTS.md` symlink 共用與失效的知識庫掛載 —— 每個 agent 獨立運作，共用的只有知識庫本身 |
 | **1.2.17** | 2026-08-14 | 補 1.2.16 漏掉的四處 `idle`（`alive` 會隨 agent 完工而下降）|
