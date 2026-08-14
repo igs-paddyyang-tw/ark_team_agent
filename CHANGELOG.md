@@ -6,6 +6,56 @@
 
 ---
 
+## [1.2.17] — 2026-08-14
+
+### 修 1.2.16 漏掉的四處 —— `alive` 會隨 agent 完工而下降
+
+> 盤點 IDLE 影響面時用 **enum** grep（`InstanceStatus.RUNNING`），但有四處是用
+> **字串字面值**比對（`i["status"] == "running"`）—— 兩種寫法互相掃不到。
+> 後果：agent 完工進 `IDLE` 後不計入 alive → `/api/health` 的 `alive` 隨工作完成而下降，
+> 外部監控誤判成「agent 掉了」。
+
+- `api.py` `/api/health`、`team.py` 團隊就緒統計 ×2、`team_mcp.py` `query_team_status`
+- 新增守門測試：掃全部 `src/*.py`，同時出現 `"running"` 與 `"awaiting_reply"`
+  卻沒有 `"idle"` 的行一律失敗（用字串掃字串，補 enum grep 的盲區）
+
+## [1.2.16] — 2026-08-14
+
+### 新增 `IDLE` 狀態 —— 區分「有人在等」與「做完了沒待辦」
+
+> `reply()` 原本不論來源一律轉 `AWAITING_REPLY`，但該狀態語意是「**有人在等我回話**」。
+> 排程跑完、agent 間任務做完都沒有人在等。
+>
+> **後果比誤報嚴重**：hang 偵測與升級兩處都寫 `!= AWAITING_REPLY`
+> → **agent 一旦回覆過，hang 偵測就被關掉**，真掛死要等安全網（4-6 小時）才看得見。
+> 實測 7 天：safety-net 33 次、decider-stuck 31 次、rule1 12 次。
+
+| 狀態 | 語意 | hang | 決策規則 | crash |
+|------|------|------|---------|-------|
+| `AWAITING_REPLY` | 有人在等我回話 | 跳過 | 套用 | ✅ |
+| `RUNNING` | 我在做事 | 超時要叫 | — | ✅ |
+| **`IDLE`（新）** | 做完了、沒待辦 | 跳過 | 跳過 | **✅ 照常** |
+
+- `send_message(..., source=)`（keyword-only、預設 `"user"`）記 inbound 來源；
+  `reply()` 分流：`user` / `web*` → `AWAITING_REPLY`，其餘 → `IDLE`。
+  **未標記的呼叫端維持既有行為。**
+- 已標記非互動來源：`scheduler` / `peer`（`/api/send`）/ `system`
+- 六處狀態判斷納入 `IDLE`（含**崩潰偵測**與送訊就緒閘門）
+- 未知來源保守進 `IDLE`：誤判成 `IDLE` 只少一次「跳過 hang」，
+  誤判成 `AWAITING_REPLY` 會關掉 hang 偵測
+- TG `/status` 新增 `idle` → 🟢 待機
+
+### Telegram 訊息文案
+
+- 「對方沒在線上」四處統一（原本四種寫法、兩種符號，且都沒講「你能做什麼」）
+- 代號與 raw instance 名混用 → 統一走代號
+- **例外訊息不再丟給使用者**（原 `❌ 重啟失敗：{e}`）—— 原因寫 log
+- 掛起通報移除三個工程師視角的「可能原因」（使用者一個都不能行動），
+  改一句人話 + 明確代價
+- 符號體系：❌ 只給「你的操作不成立」，⚠️ 給系統狀況
+
+測試 **1002 passed / 0 failed**。
+
 ## [1.2.15] — 2026-08-13
 
 ### 修 1.2.14 沒修乾淨的假警報
