@@ -6,6 +6,109 @@
 
 ---
 
+## [1.2.19] — 2026-08-14
+
+### `AGENTS.md` 成為規範主文件，放在**工作區根目錄**
+
+> **問題**：Kiro 自動載入 `.kiro/steering/*.md`，其他工具（Claude Code、Codex）不會 ——
+> 它們進到 agent 目錄後**沒有任何入口**，只能自己亂翻。
+> 實測 `AGENTS.md` 在 agent 根目錄、nana 根目錄、套件 repo **全都不存在**。
+>
+> **定調**：`AGENTS.md` 為規範**主文件**，其他工具的專屬檔（如 `CLAUDE.md`）直接參考它。
+
+- **新增 `_write_root_agents_md()`**：在每個 agent 的 **`working_directory` 根目錄**
+  （**不是** `.kiro/` 底下）產生導覽檔 —— 工作區結構、記憶怎麼用、知識庫怎麼查、
+  產出放哪、回報格式、Output Marker、紅線。
+  **套件原本完全沒有寫 agent 根目錄檔案的機制**，這是新能力。
+- 內容**依實際結構產生** —— 不存在的目錄不列入（導覽檔不該指向不存在的路徑）；
+  標題用代號（從 `description` 前綴推導，如「🏴‍☠️ 魯夫」）而非 raw instance 名。
+- **新增 `_ensure_workspace_dirs()`**：補齊工作區目錄（實測 10 個 agent 有 **4 個**
+  缺 `artifacts/` 與 `scripts/`）。只建目錄與 `.gitkeep`，不動既有內容。
+- **`agents_md` policy 回歸**（`once` / `always` / `skip`，預設 **`once`** ——
+  agent 可自行補充工作區筆記而不被覆寫）。
+
+> ⚠️ **`agents_md` 在 1.2.18 才被移除、1.2.19 回歸，語意不同**：
+> 舊＝把根目錄 AGENTS.md「同步／複製」到各 agent 的 `steering/`（實作早已拿掉）；
+> 新＝在各 agent 的**工作區根目錄**產生導覽檔。
+> 本意相同（讓每個 agent 都有 AGENTS.md），這次是把實作做對。
+
+### 整併並刪除 `.kiro/steering/AGENTS.md`（11 份）
+
+實測那份 126 行的「AI Team 共用規範」**8 節裡有 6 節在別處已有** ——
+所以這是**去重**不是搬遷：
+
+| 章節 | 處置 |
+|------|------|
+| 工具使用規則（`fs_write`）／訊息分流／Output Marker | **獨有** → 移入根 `AGENTS.md`（`fs_write` 改寫成「Kiro ↔ 你」的工具對照表）|
+| 協作流程 | 刪除（`TEAM.md` 已有）|
+| AI 開發流程 SDD | 刪除（`dev-workflow.md` 已有）|
+| 回覆風格 | 移入根 `AGENTS.md`（含 **❌／⚠️ 的語意分野**：❌ 是「你的操作不成立」、⚠️ 是「系統狀況」）|
+| 產出路徑規則／禁止事項 | 移入根 `AGENTS.md`（`BRAIN.md` 的 Output 表回答的是「知識 vs 交付物」，兩者互補不重複）|
+
+**Kiro 端零損失**：`BRAIN.md` 用 Kiro 既有的檔案引入語法 `#[[file:AGENTS.md]]`
+把主文件拉進 context —— 單一真相，Kiro 與非 Kiro 兩邊吃到同一份。
+
+### 文件
+
+- nana 根 `AGENTS.md`：產生的工作區導覽 + **手寫的 repo 面**（模組地圖、常用指令、
+  共用 working tree 的 git 紅線）。`once` policy 保護手寫部分不被覆寫。
+- `CLAUDE.md`：開頭指向 `AGENTS.md` 並說明分工（只保留 Claude Code 專屬的
+  `@` 匯入與工具對照）；`@.kiro/steering/AGENTS.md` 匯入改為 `@AGENTS.md`。
+- **套件 repo 新增 `AGENTS.md`** —— 內容不同（那是發布通道不是開發源）：
+  明寫「這裡沒有 `src/`，改程式碼要去 nana」+ 發版 SOP + 組織 token 陷阱。
+
+測試：`tests/test_root_agents_md.py`（16）。
+
+### 實機驗證抓到的缺陷（同版修掉）
+
+首次重啟後 11 份都產出了，但**標題全是 raw instance 名**（`cto-agent（cto-agent）`
+而非「🏴‍☠️ 魯夫」）。根因：代號從 `cfg.instructions` 推導，而 `daemon` 傳的是
+`instructions=ic.system_prompt` —— 實測**多半是 `None`**，代號其實在 `ic.description`。
+
+單元測試沒抓到，因為測試 fixture 直接傳 `instructions=DESC`（把「輸入從哪來」也一起
+假設掉了）。修法：`KiroBackendConfig` 加 `description` 欄位、`daemon` 傳 `ic.description`、
+推導改以 description 優先，並補兩個迴歸測試鎖住來源。
+
+> 這是「單元測試全綠但實機錯」的典型。**實機重啟驗證不能省。**
+
+## [1.2.18] — 2026-08-14
+
+### 架構定調：**每個 agent 獨立運作與發展，只有知識庫共用**
+
+依此清掉三個「設定還在、實作早就拿掉」的死 policy：
+
+| 死設定 | 宣稱行為 | 實際 |
+|--------|---------|------|
+| `kiro_files.steering.agents_md`（預設 `symlink`） | AGENTS.md 從根目錄同步到各 agent | `backend.py` 明寫 `AGENTS.md — REMOVED: no longer synced`，**零引用**。實測 12 份 AGENTS.md 是內容相同的複本（md5 一致），**沒有任何同步機制** |
+| `kiro_files.knowledge.shared_wiki`（預設 `symlink`） | 共用知識庫掛進各 agent | `_mount_shared_knowledge` 是 **DISABLED 空殼**，卻仍被呼叫 |
+| `kiro_files.knowledge.private_wiki` | 私有 wiki 初始化 | 零引用 |
+
+- 三個欄位與其 YAML 解析全部移除；`_mount_shared_knowledge` 的呼叫一併拿掉。
+- 舊 `team.yaml` 若仍留著 `kiro_files.knowledge` 區塊，**解析時直接忽略**（不報錯、不影響啟動）。
+- 知識庫共用**維持不變** —— 靠 `wiki_query` MCP 工具，本來就不是靠 symlink 或複製檔案。
+
+> 這與 1.2.13 的 `mcp_servers` 死程式碼是同一類問題：**設定存在、實作已移除**，
+> 讀設定的人會以為它有效，然後在錯誤的假設上做決定。
+
+### 清除孤兒 agent 目錄 + CI 守門
+
+- 刪除 `agents/report-agent/`：team.yaml **零提及**，卻有 77 個檔案
+  （6 個 skill，全是別處也有的副本；非 skill 檔 **0**），且完全沒有
+  steering／mcp.json／agent.json —— 那些檔只在 `start_instance` 時寫，而它從不啟動。
+  是 2026-07-29「5 → 8 agent」的遺留。
+- 新增 `scripts/check_agent_dirs.py`：`agents/` 目錄必須與 team.yaml 成員一一對應。
+  **孤兒目錄（有目錄無成員）→ exit 1**；缺目錄只提示（首次啟動會建立）。
+  `working_directory` 不在 `agents/` 底下者自動排除
+  —— orchestrator 常設 `.` 指向專案根，不排除會永遠報一個假缺口。
+
+### 文件更正
+
+`CLAUDE.md` 原寫「`TEAM.md` 由服務啟動時自動產生（policy=always），手動修改會被覆寫」，
+**實際預設是 `once`** —— 只在檔案不存在時寫，重啟不覆寫（實測三份 mtime 都停在 2026-07-30）。
+目前內容正確只是因為成員沒變過；**改了成員後 TEAM.md 不會自動更新**。
+
+測試：`tests/test_agent_dirs_check.py`（7）。
+
 ## [1.2.17] — 2026-08-14
 
 ### 修 1.2.16 漏掉的四處 —— `alive` 會隨 agent 完工而下降
