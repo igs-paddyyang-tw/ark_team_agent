@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.24-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.25-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.24/ark_team_agent-1.2.24-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.25/ark_team_agent-1.2.25-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.24/ark_team_agent-1.2.24-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.25/ark_team_agent-1.2.25-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.25** | 2026-08-17 | MCP 進度行不再被當成「就緒」—— `ctrl-c to start chatting now` 是`⠋ 0 of 1 mcp servers initialized…` 的尾巴，實測它在 2.4s、一個 server 都沒起來時就印出，於是「2.0s 就緒」其實是「剛開始初始化」。改認 `All tools are now trusted`（實機 2.0s→4.0s）。**本版為套件開發搬移至 paddy 的基準線** |
 | **1.2.24** | 2026-08-17 | 未知 instance 欄位不再被靜默丟棄 —— aiops 9 個 instance 寫了不存在的 `resume_session`，7 個 agent 的行為與設定意圖相反且毫無訊號。建議排序依詞素交集而非字面相似度（`difflib` 會給錯答案）|
 | **1.2.23** | 2026-08-17 | 「宣告了沒接上」四連修：`private_chat_routing` 整段是死設定（`TeamConfig` 沒此欄位，keyword 路由從未生效）、`route_by_keyword` 的寫死預設、決策路徑用名字比對而非 `working_directory`、`build_release --release` 從未成功執行過 |
 | **1.2.22** | 2026-08-17 | 清掉三個假警報並修一個實質缺陷：`mcp_undeclared_moved` 殘骸誤判、`slow_startup` 閾值 0.5→0.75、TEAM.md 不再謊報自己的 policy；**MCP 啟動失敗不再被認列為就緒**（原本 status=RUNNING 後 4–30 秒才 rc=3 死掉，期間訊息全丟）|

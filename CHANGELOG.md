@@ -6,6 +6,58 @@
 
 ---
 
+## [1.2.25] — 2026-08-17
+
+> **這一版是「套件開發搬移至 paddy」的基準線。** 從 paddy build 的首版是 1.3.0，
+> 行為應與本版完全一致，差異只有 build 來源。1.3.0 出問題時，對照點就是這裡。
+
+### MCP 進度行不再被當成「就緒」
+
+`READY_PATTERN` 含 `ctrl-c to start chatting now` 與 `start chatting` ——
+而那正是 Kiro **MCP 初始化進度行**的尾巴：
+
+```
+⠋ 0 of 1 mcp servers initialized. ctrl-c to start chatting now
+```
+
+**兩個 pattern 都吃中它。** 2026-08-17 實測（復現 daemon 的 pipe spawn，非 pty）：
+這行在 **2.4 秒** 就印出，而當下 **`k=0`，一個 MCP server 都還沒起來**。
+於是 daemon 判定就緒、`status=RUNNING`、啟動訊息佇列 ——
+**多數 agent 帳面上的「2.0s 就緒」其實是「MCP 剛開始初始化」。**
+
+真就緒訊號是 `All tools are now trusted`（2.8–2.9s，位於 logo／`Model: auto` 之後，
+`--resume` 與否都會印）。它本來就在 pattern 裡，所以移除進度行不會讓判定失去依據。
+
+**實機驗證**（nana 11 agents）：
+
+| | 啟動耗時 | 意義 |
+|---|---|---|
+| 改動前 | 2.0s | 假就緒（`0 of N`） |
+| 改動後 | **4.0s** | 真就緒 |
+
+11/11 alive、degraded 空、`MCP N 個` 觀測數字不變。代價是多一輪輪詢（2s）。
+
+**為什麼不改成「等 `k == m`」**（原本的直覺方案）：實測 Kiro **不等 MCP 完成就進 chat**
+—— 印 `⚠ 0 of 1 … Servers still loading: - fetch` 之後直接進入交談。
+所以 `k == m` 的進度行**可能永遠不出現**，那種寫法會等到 timeout 才失敗。
+這個假設是靠實測推翻的，不是靠讀程式碼。
+
+### 與 1.2.22 的把關是兩道不同的防線
+
+| 防線 | 攔什麼 | 時序 |
+|------|--------|------|
+| 1.2.22 `_wait_for_ready` 的 MCP 失敗把關 | buffer **已含**失敗訊息 | 失敗訊息先到 |
+| 1.2.25 收緊 `READY_PATTERN` | 進度行被當就緒 | 進度行先到 |
+
+兩者都需要 —— 單有把關擋不住「先看到進度行就 return True」，
+單有收緊擋不住「已經失敗但還沒退出」。
+
+> ⚠️ **仍未完全解決**：Kiro 進 chat 後 MCP 才在背景失敗的情況，daemon 已回報就緒，
+> 只能靠 `_on_exit` 的事後歸因（`rc=3` + `mcp_startup_failed:` degraded）。
+> 要根治需要 Kiro 提供「MCP 全部就緒」的明確訊號，那不在套件可控範圍。
+
+測試：1155 → **1156 passed**（原本記錄「進度行會被誤判」的兩個測試反轉為守門）。
+
 ## [1.2.24] — 2026-08-17
 
 ### 未知 instance 欄位不再被靜默丟棄
