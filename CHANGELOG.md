@@ -6,6 +6,54 @@
 
 ---
 
+## [1.3.0] — 2026-08-17
+
+> **第一個從 paddy-team-agent build 的版本。** 功能與 1.2.26 **完全相同** ——
+> 實測 wheel 內容除版號相關檔案外逐檔一致。這個 minor 跳號唯一的意義是標記
+> **build 來源已遷移**。
+
+### 開發環境遷移：nana-team-agent → paddy-team-agent
+
+| | 遷移前 | 遷移後 |
+|---|---|---|
+| 套件開發源 | nana（同時是 11 agents 部署 + 2 子專案宿主） | **paddy**（5 agents，最精簡） |
+| 發版 build | nana 的 `src/` | paddy 的 `packages/ark-team-agent/` |
+| Release repo | `igs-paddyyang-tw/ark_team_agent` | **不變** |
+| 消費者的 pip install | — | **URL 與機制照舊，無感** |
+
+**為什麼搬**：nana 身兼三角（套件開發源 / 自身 11 agents 部署 / aiops+director 宿主），
+導致版本混淆、驗證一個小 bug fix 要拉起整個生態系、協助子專案時可能誤觸套件原始碼。
+paddy 只有 5 agents，改壞影響小、啟動快。
+
+> ⚠️ **搬走套件不會讓 nana 變輕** —— nana 有 5,026 個追蹤檔，套件本體只佔 **57 檔（1.1%）**，
+> `projects/`（aiops + director）佔 48.6%。搬移買到的是「**套件開發**這件事變輕」。
+
+### 版號策略
+
+以「誰 build 的」切分，**不預先宣告**：
+
+| 階段 | 版號 |
+|------|------|
+| nana build | 接續 `1.2.x` —— 最後一版 **1.2.26**（＝搬移基準線） |
+| **paddy build 的首版** | **1.3.0** |
+| 之後 | 1.3.1+ |
+
+計畫文件曾有互斥敘述（主文「從 v1.3.0 起算」vs 風險 3「版號接續不 reset」），
+2026-08-17 定案以上表為準。
+
+### 搬移的驗證方式
+
+| 驗證 | 結果 |
+|------|------|
+| 原始碼一致性 | 182 檔逐檔 sha256 與 nana 來源相同 |
+| **wheel 一致性** | paddy build vs nana build **187/187 逐檔相同**（唯一差異 `dist-info/METADATA`）|
+| 測試 | 96 檔**原封不動**搬移 → **1259 passed, 0 failed** |
+| skill 集合 | `build_release.py` 的 `verify_wheel_skills()` 通過（11 個）|
+
+`tests/deployment/` **不隨套件搬移** —— 那層測「本機部署設定」而非套件邏輯。
+分兩層的理由：測試是搬移的度量衡，**度量衡不能在搬移過程中被修改**，
+否則無法區分「測試過了因為搬移成功」與「測試過了因為我把它改到會過」。
+
 ## [1.2.26] — 2026-08-17
 
 ### 🔴 aiops / director 的緊急通知與 L3 拍板卡，從來沒送出過

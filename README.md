@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.26-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.26/ark_team_agent-1.2.26-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.0/ark_team_agent-1.3.0-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.26/ark_team_agent-1.2.26-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.0/ark_team_agent-1.3.0-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.3.0** | 2026-08-17 | 🚚 **開發環境遷移：nana-team-agent → paddy-team-agent**。功能與 1.2.26 完全相同（wheel 187/187 逐檔一致，唯一差異是 `__version__` 那行）—— minor 跳號唯一的意義是標記 build 來源已遷移。Release repo 與 `pip install` URL 機制不變 |
 | **1.2.26** | 2026-08-17 | 🔴 **aiops / director 的緊急通知與 L3 拍板卡從來沒送出過** —— `notify_paddy()` 寫死 `_private_chat_map.get("ark-agent")`，而它們的入口是 `admin-agent` / `tech-agent`。改為依 role 推導。另含 CI 補 `ark-agent` 盲區（噴 24 處）與測試分兩層（`tests/deployment/` 不隨套件搬移）|
 | **1.2.25** | 2026-08-17 | MCP 進度行不再被當成「就緒」—— `ctrl-c to start chatting now` 是`⠋ 0 of 1 mcp servers initialized…` 的尾巴，實測它在 2.4s、一個 server 都沒起來時就印出，於是「2.0s 就緒」其實是「剛開始初始化」。改認 `All tools are now trusted`（實機 2.0s→4.0s）。**本版為套件開發搬移至 paddy 的基準線** |
 | **1.2.24** | 2026-08-17 | 未知 instance 欄位不再被靜默丟棄 —— aiops 9 個 instance 寫了不存在的 `resume_session`，7 個 agent 的行為與設定意圖相反且毫無訊號。建議排序依詞素交集而非字面相似度（`difflib` 會給錯答案）|
