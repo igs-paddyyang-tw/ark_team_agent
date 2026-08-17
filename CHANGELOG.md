@@ -6,6 +6,78 @@
 
 ---
 
+## [1.3.1] — 2026-08-17
+
+> **同一個缺陷家族的第五批**：宣告了、寫死了、或根本沒接上，而且**沒有任何錯誤訊息**。
+> 這批裡影響最大的一項（`run_team()` 不設 logging）讓三個部署共 21 個 agent
+> **持續在無日誌狀態下運行** —— 服務是活的、API 回 200、TG 有反應，
+> 所以沒人發現看不到任何 INFO。**假綠燈比壞掉更難察覺。**
+
+### 🔴 `run_team()` 從不初始化 logging（三個部署 21 agents 全程無日誌）
+
+各部署的 `start.py` 直接 `from ark_team_agent.team import run_team`，**不走 CLI**。
+而 logging 的 `setup_logging()` 只在 `cli.py` 裡呼叫 → 走 `start.py` 的部署
+root logger 沒有任何 handler，level 停在 WARNING。
+
+實測（2026-08-17，近一小時 journal）：
+
+| 部署 | 入口 | INFO 行數 |
+|------|------|-----------|
+| nana | CLI | 238 |
+| aiops / director / paddy | `run_team()` | **0**（總共 7 行，全是 stderr 漏出的）|
+
+看不到的東西：scheduler 觸發、agent 就緒／崩潰、MCP 掛載結果、degraded 明細。
+出事時完全無從追。
+
+修法：`run_team()` 在 root logger **沒有 handler 時**補上 `setup_logging()`，
+沿用 `ARK_LOG_LEVEL` / `ARK_JSON_LOG` 環境變數。已設過的（如 CLI）不覆蓋。
+
+### `team_doc.command_chain` 與實際編制不一致時無訊號
+
+指揮鏈圖是**角色層級**的簡化（`使用者 → admin → manager → leader → worker`），
+但同一角色可以有多個 instance。nana 有**兩個 admin**（`ark-agent`、`cto-agent`），
+讀圖的 agent 會誤判自己在鏈上的位置。
+
+`TEAM.md` 現在會在圖下附一行實際分佈：
+
+```
+> 實際編制：admin×2、leader×1、manager×1、worker×7。上圖是角色層級的簡化 ——
+> 同一角色可能有多個 instance，完整成員見上方表格。
+```
+
+並對兩種不一致發 warning：圖上有的角色實際不存在（**幽靈角色**）、
+實際有的角色沒上圖（那些 agent 在指揮鏈上**隱形**）。
+
+### `scheduler` 的 drift 日誌目標寫死 `cto-agent`
+
+`_builtin:knowledge-digest` 的 drift 記錄目標是 nana 專屬的 instance 名，
+其他部署一律落空。改為依 **role** 推導：找 `admin`（其次 `manager`）的
+`working_directory` 下的 `knowledge/`。
+
+⚠️ **不能猜 `agents/{name}` 路徑** —— aiops 的 agent 目錄直接在專案根下，
+而它另有一個殘留的 `agents/itom-agent/`。猜路徑會把日誌寫進沒人在用的目錄
+（第一版就是這樣）。四個部署實測皆正確解析。
+
+### `cli.py` 的入口 agent 名寫死 `ark-agent`（13 處）
+
+`init` 產出的 `.kiro/agents/<name>.json`、`knowledge/<name>/` 櫃子、
+以及 `schema.md`／`index.md`／`log.md` 內容全部寫死 `ark-agent`。
+新增 `--entry-name`，預設值保持 `ark-agent`（向後相容）。
+
+### 🐛 `init` 在全新環境**必定失敗**（`UnboundLocalError`，1.3.0 與更早版本都有）
+
+修上面那項時發現的既有 bug：`raw` 在第 350 行才賦值，卻在 319 行就被使用。
+症狀是 `init` 走到寫 `mcp.json` 那步直接炸，rc=1。
+
+沒被發現的原因：**既有部署都不會再跑 `init`**。也就是說這個指令對
+README 的第一個讀者是壞的，對所有現存使用者是無感的 —— 典型的
+「只有新人會踩到，而新人以為是自己弄錯」。
+
+### 測試
+
+`tests/test_v131_fixes.py` — 12 個守門測試，含正反兩向
+（logging 要補、但**不得覆蓋**呼叫端已設的）。全量 **1345 passed / 7 skipped**。
+
 ## [1.3.0] — 2026-08-17
 
 > **第一個從 paddy-team-agent build 的版本。** 功能與 1.2.26 **完全相同** ——
