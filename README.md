@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.22-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.2.23-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 
@@ -13,7 +13,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.22/ark_team_agent-1.2.22-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.23/ark_team_agent-1.2.23-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
@@ -24,7 +24,7 @@ pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download
 
 ```bash
 # 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.22/ark_team_agent-1.2.22-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.2.23/ark_team_agent-1.2.23-py3-none-any.whl
 
 # 2. 初始化專案結構
 ark-team-agent init
@@ -224,6 +224,7 @@ instances:
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.2.23** | 2026-08-17 | 「宣告了沒接上」四連修：`private_chat_routing` 整段是死設定（`TeamConfig` 沒此欄位，keyword 路由從未生效）、`route_by_keyword` 的寫死預設、決策路徑用名字比對而非 `working_directory`、`build_release --release` 從未成功執行過 |
 | **1.2.22** | 2026-08-17 | 清掉三個假警報並修一個實質缺陷：`mcp_undeclared_moved` 殘骸誤判、`slow_startup` 閾值 0.5→0.75、TEAM.md 不再謊報自己的 policy；**MCP 啟動失敗不再被認列為就緒**（原本 status=RUNNING 後 4–30 秒才 rc=3 死掉，期間訊息全丟）|
 | **1.2.21** | 2026-08-14 | MCP 宣告機制修正：宣告的 `fetch` 不再被硬編預設靜默覆蓋、兩份 fetch 並存修正、預檢擴充到 env 內的路徑（憑證不存在 → server 起得來但所有呼叫失敗）|
 | **1.2.20** | 2026-08-14 | 多使用者 session 隔離治理（分隔符 `#`→`~`、`max_user_sessions` 空殼補實作、per-user 工作區隔離）+ N5 記憶治理啟用（`steering/MEMORY.md` 日期分節歸檔）|

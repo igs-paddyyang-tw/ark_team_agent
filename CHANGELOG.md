@@ -6,6 +6,104 @@
 
 ---
 
+## [1.2.23] — 2026-08-17
+
+### 「宣告了沒接上」四連修 —— 同一個病灶家族
+
+四項的共同病徵：**設定檔看起來很完整，但套件根本沒在讀**，且沒有任何錯誤訊息。
+
+**① `private_chat_routing` 整段是死設定**
+
+`TeamConfig` **沒有這個欄位**，而 `telegram.py` 用
+`getattr(config, "private_chat_routing", {})` 讀 —— 於是永遠拿到 `{}`。
+nana 宣告了 `mode` / `fallback` / `confidence_threshold` 與 3 群 20 個關鍵字，
+**keyword 路由從未生效過一次**。
+
+沒被發現的原因值得記下來：**主路徑是好的** —— 入口 agent 用 `SOUL.md` /
+`intent-classify.md` 的提詞做 LLM 意圖分類，那不經過套件。keyword 只是備援。
+**備援壞了而主機制正常，所以零症狀。**
+
+修法不只是補欄位。接上之後**必須依 `mode` 分流**（新增 `keyword_routes_for()`）：
+
+| `mode` | 套件行為 |
+|--------|---------|
+| `keyword` | 用 `keyword_routes` 決定目標（空的話發警告 —— 那等於沒設定） |
+| 其他 / 未設 | 回 `{}`，不介入，一律送 `bound_instance` 讓入口 agent 自己判斷 |
+
+> ⚠️ 若無條件套用 keyword，nana（`mode: ark-agent`）的行為會**改變** ——
+> 「技術」「bug」會在入口 agent 之前被攔去 cto-agent，**繞過它的 7 種意圖分類**。
+> 那是把一個沉睡的備援變成會改變既有行為的攔截器。已用真實 `team.yaml` 測試固定此行為。
+
+`fallback` 與 `confidence_threshold` **套件不解讀** —— confidence 是 agent 的 LLM
+判斷結果，不會回傳給套件，套件無從得知該不該降級。那兩個值由 agent 的 steering 遵循。
+這點已寫進 `config.py` 的欄位註解，避免下一個人再以為它們沒接上。
+
+**② `route_by_keyword(fallback="ark-agent")` 死預設**
+
+`ark-agent` 是 nana 的 instance 名，對其他部署毫無意義。它一直沒出事是因為
+唯一呼叫端明確傳了 `bound_instance` —— 那行是**死代碼**，留著只會讓人以為
+套件有「預設路由目標」這回事。改回 `None`（回傳型別 `str | None`）：
+沒有目標就明說沒有，由呼叫端處理。呼叫端加 `or bound_instance` 兜底。
+
+**③ 決策知識回寫用名字比對，而非 `working_directory`**
+
+`write_knowledge_feedback` 裡 `if original_owner == "ark-agent"` 走
+`knowledge/ark-agent/raw/decisions/`，其他走 `agents/{name}/…`。
+其他部署沒有這個名字，**永遠走 else，是死分支**。
+
+真正的判準不是「叫什麼名字」，而是「`working_directory` 是否就是專案根」：
+根目錄的 agent 不能用 `base/knowledge/`（那層是共用圖書館，會污染其他櫃子），
+要用自己的櫃子 `base/knowledge/{owner}/`。抽出 `_knowledge_raw_dir()`，
+任何部署的「wd=專案根」agent 都正確，不只 ark-agent。查不到設定時退回舊佈局。
+
+**④ `build_release.py --release` 從未成功執行過**
+
+`RELEASE_REPO` 指向 `ark-team-agent-release`（**不存在**，實際是 `ark_team_agent`），
+所以 `--release` 一律在存在性檢查就 `sys.exit(1)` —— 歷來發版都是手動走 BRAIN 的 SOP。
+
+修路徑之外**加了發版前置檢查**：發版 repo 的 README 與 CHANGELOG 必須已含本版號。
+少了這道，`--release` 會發出「GitHub 有 tag、但 repo 文件還停在上一版」的半套發佈
+—— 使用者照 README 的安裝指令抓到舊版 URL，而且沒有任何錯誤。
+
+### 已知盲區（本版未處理）
+
+`scripts/check_hardcoded_names.py` 的 `BANNED` 只有 `ceo-agent` / `cto-agent` +
+角色代號，**`ark-agent` 不在名單**。所以上面 ②③ 這類硬編碼 CI 抓不到 ——
+`scheduler.py` 的 4 處 `cto-agent` 全都被迫加 `# hardcode-ok` 標記，而
+`decision_manager.py` 的 `ark-agent` 一個標記都沒有，不是因為它更乾淨，是沒人在看。
+加入名單前要先排除 `Author: ark-agent` 署名，否則大量誤報。
+
+測試：1136 → **1151 passed**（+15）。
+
+### 範本補上 `team_doc` 註解（純註解，零 runtime 變更）
+
+`team_doc` 從 v1.1.3 就存在，但**沒有任何範本提到它** —— 沒讀過
+`write_team_context` 原始碼的人不會知道可以設。它控制 TEAM.md 的兩段：
+
+```yaml
+team_doc:
+  command_chain: "使用者 → admin → manager → leader → worker"
+  workflow: "leader(分析) → worker(執行) → leader(驗收) → manager(彙報)"
+```
+
+**未設 → TEAM.md 直接省略這兩段**（不是留空標題，見
+`test_omitted_when_unset`）。所以 slot / fish / paddy 的 agent 從來只看到
+成員表與通訊規則，沒有指揮鏈；nana 有設，所以它的 TEAM.md 兩段都在。
+
+已在 `templates/team.yaml` 與 `examples/team.yaml` 補上註解形式的範例
+（維持預設不啟用 —— 內容是團隊自訂的，套件不該硬給一套）。
+
+> ⚠️ **這批註解不在 1.2.22 的 wheel 裡**（發版在前）。新部署用
+> `ark-team-agent init` 產生的 `team.yaml` 要等下次發版才會帶上這段。
+> 純註解，不影響任何行為。
+
+### agent 看不到的機制，要寫在人看的地方
+
+順帶記錄一個判斷：**沒有讓產生器在未設 `team_doc` 時提示 agent「可以去設」**。
+agent 只讀 TEAM.md 的最終內容，且通常沒有修改自己設定檔的權限與 skill ——
+對它提示等於製造一段它無法行動的雜訊。這種「機制存在但要人來開」的事，
+正確位置是範本註解與專案文件，不是 agent 的 always-on context。
+
 ## [1.2.22] — 2026-08-17
 
 ### 清掉兩個常駐假警報 —— 都是判定邏輯的問題，不是服務有問題
