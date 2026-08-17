@@ -6,6 +6,74 @@
 
 ---
 
+## [1.2.26] — 2026-08-17
+
+### 🔴 aiops / director 的緊急通知與 L3 拍板卡，從來沒送出過
+
+補 CI 盲區時逼出來的功能性缺陷。`notify_paddy()` 與 `send_l3_escalation_card()`
+都寫死：
+
+```python
+paddy_chat_id = self._private_chat_map.get("ark-agent")
+```
+
+`ark-agent` 是 **nana** 的入口名。實測各部署的私訊入口：
+
+| 部署 | 入口 instance | 結果 |
+|------|--------------|------|
+| nana | `ark-agent` | ✅ 有效 |
+| **aiops** | `admin-agent` | ❌ 拿不到 → 直接 return，通知丟棄 |
+| **director** | `tech-agent` | ❌ 同上 |
+
+而且 log 還印「`ark-agent has no private_chat_id configured`」——
+對它們來說**連這句訊息都是錯的**（它們沒有 ark-agent）。
+
+修法：抽出 `owner_chat_id()`／`_owner_chat_id()`，**依 role 推導**
+（優先 `admin`，再退回任何已綁 `private_chat` 的 instance）。
+這個 pattern 套件裡本來就有 —— `/api/reply` 的 admin fallback 一直是這樣寫的，
+只是這兩處沒用它。
+
+### CI 補上 `ark-agent`，一次噴出 24 處
+
+`check_hardcoded_names.py` 的 `BANNED` 原本只有 `ceo-agent` / `cto-agent` +
+角色代號。補上 `ark-agent` 後噴 **24 處**，分類處理：
+
+| 類型 | 數量 | 處置 |
+|------|------|------|
+| 功能性缺陷 | 3 | 上述 `owner_chat_id` 修正 |
+| 與名字無關的路徑判斷 | 4 | `team_mcp` 的知識庫櫃子改看**目錄是否存在**；其中一處是**完全多餘**的（它加的路徑與下方 fallback 相同且有去重） |
+| 訊息來源標記 | 3 | `"source": "ark-agent"` → `_instance`（實際發送者） |
+| 升級預設對象 | 1 | `decision_manager` 的 `fallback` 預設改 `_fallback_owner()`（第一個 admin → 原 owner），原本會把升級發給不存在的 instance |
+| `init` 範本內容 | 13 | 標 `# hardcode-ok: init 範本預設值` |
+
+> 為什麼原本不在名單裡：推測是怕 `Author: ark-agent` 署名造成誤報。
+> 但 `scan()` 早就跳過 docstring 與註解，**那個顧慮不成立** ——
+> 代價是這個名字的硬編碼一個標記都沒有，不是因為它更乾淨，是沒人在看。
+
+### 測試分兩層（為套件搬移做準備）
+
+新增 `tests/deployment/` —— 測「**本機部署設定**」而非套件邏輯，**不隨套件搬移**。
+
+| | `tests/*.py` | `tests/deployment/*.py` |
+|---|---|---|
+| 測什麼 | 套件邏輯 | 本機部署的實體設定 |
+| 依賴 | 只用 `tmp_path` 與自建 fixture | 讀專案根的 `team.yaml`、`scripts/`、`projects/*/` |
+| 搬移時 | **一起搬**（原封不動應綠燈） | **留在原地** |
+
+**為什麼現在做**：套件開發要移交 paddy，而計畫的成功標準是「`pytest` 核心測試全過」。
+若測試在搬移途中被改（改 fixture、改路徑、改斷言），那句話就失去證明力 ——
+你無法區分「測試過了因為搬移成功」和「測試過了因為我把它改到會過」。
+**測試是搬移的度量衡，度量衡不能在搬移過程中被修改。**
+
+盤點結果：98 個測試檔裡只有 **3 個測試**有本機依賴，全部在當天新寫的
+`test_dead_config_a_batch.py`。既有 97 檔的 fixture 早就自包含 ——
+**耦合是持續產生的，不是歷史債**，所以判準寫進 `tests/deployment/README.md`。
+
+搬移時順帶補了兩個部署守門：每個部署必須有 `private_chat` 入口
+（否則上述通知無處可送）、`group` 必須指向存在且 role 為 leader 的 instance。
+
+測試：1156 → **1158 passed**（+5 部署測試 −3 搬走）。
+
 ## [1.2.25] — 2026-08-17
 
 > **這一版是「套件開發搬移至 paddy」的基準線。** 從 paddy build 的首版是 1.3.0，
