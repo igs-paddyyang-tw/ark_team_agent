@@ -6,6 +6,112 @@
 
 ---
 
+## [1.2.22] — 2026-08-17
+
+### 清掉兩個常駐假警報 —— 都是判定邏輯的問題，不是服務有問題
+
+`/api/health` 的 `degraded` 長期掛著兩筆，兩筆都不代表任何真實故障。
+常駐假警報的代價不是雜訊本身，是**維運會開始習慣性忽略 degraded** ——
+那等於把這個欄位廢掉。
+
+**① `mcp_undeclared_moved` —— 宣告移除後的殘骸被當成「使用者忘了宣告」**
+
+1.2.14 修過一次同類假警報，但只修了「舊手寫 `{server}` + 新宣告
+`{server}-{instance}` 並存」。漏掉第三種情況：**宣告曾存在、後來被移除**。
+
+判斷式 `name in cfg.mcp_servers` 拿 `bigquery-data-agent` 去比對宣告名
+`bigquery`，永遠是 `False` —— 於是**套件自己產生**的殘骸被歸類成
+「使用者手寫但忘了宣告」，永久計入 degraded，還附上「補進 team.yaml 即回歸」的
+指引。而該宣告是**刻意移除**的（`GOOGLE_APPLICATION_CREDENTIALS` 指向的
+憑證檔不存在，宣告了只會產生新的 degraded）——
+照著指引做只會把剛清掉的問題加回來。
+
+修法：`{server}-{instance}` 形式的 key **必然是本套件寫的**（wrapper script
+逐 instance 產生），使用者手寫的一律是裸名。據此把殘骸單獨歸類，
+`_reason` 標「可安全刪除」，不計入提醒。條目仍保留在 `_disabled`（ADR-005
+不變 —— 套件不自動刪使用者設定的最後副本）。
+
+**② `slow_startup` 閾值 0.5 → 0.75**
+
+2026-08-17 實測 nana 11 個 agent 的啟動耗時，呈**雙峰**且中間無值：
+
+| 群 | 耗時 | 例 |
+|---|---|---|
+| 快 | 2.0–10.0s | architect(mcp=3) 2.0s、pm(mcp=2) 4.0s |
+| 慢 | 25.7–30.3s | cto(mcp=4) 30.3s、data(mcp=2) 28.3s |
+
+**與 MCP 數無關** —— 這推翻了 1.2.14 標記時的假設（「慢啟動 MCP 疊加就是
+下一次 rc=3」）。60s × 0.5 = 30s 正好切在慢群頂端，所以報出來的不是
+「這個 agent 有問題」，而是「這次剛好越線 0.3s」：同一批裡 28.4s 的三個都不報。
+
+提到 0.75（45s）後仍留 15s 告警餘裕，真的逼近 timeout 才報。
+各次耗時未被丟棄 —— `state.last_startup_seconds` 一直有記錄可查。
+
+> 慢群的成因（固定卡 25–30s）尚未查明，只確定不是 MCP 疊加。
+> 這是獨立的觀測項，不該由一個會誤報的閾值代勞。
+
+### `_wait_for_ready` 對 MCP 啟動失敗把關 —— 失敗不再被認列為就緒
+
+追查慢啟動時挖出來的，比原問題嚴重：**MCP 啟動失敗的 agent 會被回報為就緒**。
+
+誤判機制比預期更根本 —— `READY_PATTERN` 含 `ctrl-c to start chatting now`
+與 `start chatting`，而 Kiro 的 MCP **進度行**正是：
+
+```
+⠸ 6 of 7 mcp servers initialized. ctrl-c to start chatting now
+```
+
+兩個 pattern 都被它吃中。於是失敗當下的 buffer 仍讓 `is_ready()` 回 `True`，
+daemon 把 status 設成 `RUNNING`、啟動訊息佇列，**4–30 秒後**進程才以 `rc=3` 死掉。
+這段期間送進去的訊息全丟，而狀態看起來一切正常。
+`has_mcp_startup_failure` 原本只用在 `_on_exit` 的**事後**歸因。
+
+修法：`is_ready` 分支前先檢查，命中就記 `mcp_startup_failed:{name}:{k}/{m}`
+並 `return False` 走啟動失敗路徑（`status=CRASHED`，重啟邏輯即刻接手）。
+`--require-mcp-startup` 保證 Kiro 必然退出，所以不會誤殺還能用的 agent ——
+只是把「必死」提早認列。
+
+> ⚠️ **未修的部分**：進度行被當成就緒這件事本身還在。若 Kiro 先印進度行
+> （我們認列就緒）**才**印失敗訊息，這道把關攔不到，仍得靠事後歸因。
+> 要根治得讓 `is_ready` 不把 `k < m` 的進度行當就緒 —— 那會改變**所有** agent
+> 的啟動語意（現在多數 agent 的「2.0s 就緒」其實是「MCP 剛開始初始化」），
+> 風險級別不同，另案處理。
+
+### 開機錯開（`scripts/stagger_boot_start.py`）
+
+2026-08-17 09:02 實測：**七個** user service 在同一秒被 systemd 拉起，
+合計 50+ 個 kiro-cli 併發 spawn（原以為只有三個）。
+
+在 `ExecStart` 前插一道**只在開機 600 秒內生效**的 `ExecStartPre` sleep，
+依序 aiops 60s / director 120s / slot 180s / paddy 240s / ninja-team 300s
+（nana 不延遲，它是主控）。判斷 uptime 是必要的 —— `Restart=always` 會讓
+`ExecStartPre` 在每次崩潰重啟時也執行，無條件 sleep 等於拉長故障恢復時間。
+
+> systemd 會展開 `%`，所以 `${up%.*}` 在 unit 檔裡必須寫成 `${up%%.*}`；
+> `|| true` 也不可省 —— `ExecStartPre` 回非 0 會讓整個服務啟動失敗。
+
+### TEAM.md 不再謊報自己的 policy
+
+`write_team_context` 產出的內容有 **4 處**寫死「本文件由系統自動產生
+（policy=always）」，但 `team_md` 的**預設是 `once`**（只在檔案不存在時寫入）。
+對 `once` 的部署來說那句話是反的 —— 它不但不會每次重啟產生，而且**永遠不會再產生**。
+
+實測代價（slot-team-agent）：該專案從 fish fork 而來
+（`3317693 chore: fork from fish-team-agent`），TEAM.md 原封帶過來 ——
+內容是 **v1.0.5 時代**產生的，含當年 `backend.py` 硬塞的 `cto-agent`
+（v1.2.0 已移除硬塞），而 slot 的 `team.yaml` **從未宣告過**這個 instance
+（`git log -S` 全歷史 0 次）。`policy=once` 讓 14 份 TEAM.md 全部凍在 fork 當天，
+**升級套件到 1.2.21 也修不好**。TEAM.md 是 always-on steering，
+13 個 agent 每次對話都吃到這張含幽靈成員的表。
+
+而檔案上「自動產生」四個字，讓診斷往「產生器壞了」的方向去 ——
+真相是它根本沒再產生過。
+
+修法：`tc_policy` 本來就在手上，改印**實際值**，並抽出 `_team_md_policy_note()`
+依 policy 給對應說明。`once` 模式明說「重啟不會更新」並附重新產生的方法。
+
+測試：1123 → **1136 passed**（+3 殘骸判定、+7 ready 把關、+3 policy 誠實性）。
+
 ## [1.2.21] — 2026-08-14
 
 ### MCP 宣告機制首度啟用 —— 並修掉三個讓它「宣告了沒用」的缺陷
