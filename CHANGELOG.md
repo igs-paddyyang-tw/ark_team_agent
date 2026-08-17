@@ -6,6 +6,53 @@
 
 ---
 
+## [1.2.24] — 2026-08-17
+
+### 未知 instance 欄位不再被靜默丟棄
+
+`_merge_instance` 的 `if hasattr(ic, k): setattr(...)` —— 條件為假時**什麼都不做**。
+設定檔寫了、載入時被丟掉、**沒有任何訊息**。
+
+實測代價（aiops）：9 個 instance 全部寫 `resume_session: true`，
+而套件的欄位名是 `skip_resume`，**且語意相反**（要接續 ＝ `skip_resume: false`）。
+於是：
+
+| instance | 設定意圖 | 實際（欄位被丟 → 依 role 預設）|
+|---|---|---|
+| admin-agent / itom-agent | 接續 | 接續 ✅ 碰巧一致 |
+| **ic-agent + 6 worker** | 接續 | **開新對話** ❌ 相反 |
+
+7 個 agent 的行為與設定意圖相反，而且從設定檔完全看不出來。
+這是本專案反覆修過的「宣告了沒接上」家族中最隱蔽的一種 ——
+前幾例是「欄位對但沒讀」，這是「**欄位名拼錯**」。
+
+修法是一道**通用警告**（攔下所有拼錯），而不是逐個支援錯誤的別名：
+
+```
+WARNING team.yaml instance 'ic-agent' 的欄位 'resume_session' 不存在
+        → **已忽略**（設定不會生效）。你是不是想寫 'skip_resume' 或 'max_user_sessions'？
+```
+
+**建議排序刻意不用字面相似度。** `difflib.get_close_matches("resume_session", …)`
+的首選是 `max_user_sessions`（共同子串多），而正解是 `skip_resume`。
+改成依「詞素交集 ÷ 候選詞素數」排序（`_suggest_field`）：
+
+```
+skip_resume       ∩ {resume, session} = {resume}  → 1/2 = 0.50  ✅
+max_user_sessions ∩ {resume, session} = {session} → 1/3 = 0.33
+```
+
+詞素少而命中的欄位更可能是使用者想寫的那個。完全無共同詞素時才退回字面相似度。
+
+**噪音控制**：加警告前先掃過全部六個部署 —— 只有 aiops 的 `resume_session` × 9
+會觸發，其餘五個乾淨。常駐假警報會讓人習慣性忽略整個警告機制，
+所以「加了會噴多少」必須先量過再決定。
+
+新增守門測試：掃本機所有 `team.yaml`，有未知欄位就紅燈 ——
+下次有人再發明一個欄位名會立刻被抓到。
+
+測試：1151 → **1155 passed**。
+
 ## [1.2.23] — 2026-08-17
 
 ### 「宣告了沒接上」四連修 —— 同一個病灶家族
