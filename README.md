@@ -5,7 +5,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.4.2-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.4.3-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 [![Tests](https://img.shields.io/badge/tests-1417%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
@@ -71,7 +71,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.4.2/ark_team_agent-1.4.2-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.4.3/ark_team_agent-1.4.3-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝並在 `PATH`
@@ -601,6 +601,7 @@ curl -s localhost:13030/api/health          # 🔴 看版本號
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.4.3** | 2026-08-18 | **群組也解析 `@mention`** —— 在此之前只有私訊路徑會（`ChatRouter`），群組走 `planner` 而它**完全不看 `@`**。所以在 General 打 `@qa` 是靠入口 agent 的 LLM 讀懂那個 `@` 再派工，代價是順序倒置（agent 的 ack 產生於派工之後，被派工者可能秒答）、多一次 LLM、可能判錯人、多喚醒一個 agent。`@all`／解析失敗／多目標**刻意交回 planner**（不靜默丟訊息）。守門測試 10 個 |
 | **1.4.2** | 2026-08-18 | **私訊問 → 回私訊** —— `reply_to_origin` 現在涵蓋兩種場景。1.4.0/1.4.1 只處理群組 topic，而私訊 `@mention` 別人時答案會跑到群組的某個 topic（同一類問題：回覆去「agent 的家」而不是「你問的地方」）。`_origin_topic` 的值從 `int` 改成 `(kind, dest)` —— 一個概念一個資料結構，不開第二個 dict。⚠️ 私訊目的地記的是使用者那個 `chat_id`，不是 agent 自己的 `private_chat` 設定（被派工的 worker 通常沒有）|
 | **1.4.1** | 2026-08-18 | 🔴 **訂正 1.4.0：origin 回覆路由改為 opt-in**（`communication.reply_to_origin`，**預設 false**）。1.4.0 讓它無條件生效是錯的 —— 它改變「訊息出現在哪裡」，屬於各團隊的動線習慣，不該由套件替它們決定；而實測 aiops(6)／director(4)／slot(8) 都用 `group` 把 worker 輸出收攏到組 leader 的 topic，1.4.0 在互動情境下把它拿掉且**沒有開關可關**。建議：扁平 topic／純私訊架構開，三層 group 架構維持關 |
 | **1.4.0** | 2026-08-18 | 🎯 **回覆回到「使用者發問的地方」** —— 原本一律回 agent 的歸屬 topic（自己的或 leader 的），使用者在 General 問完卻要切 topic 找答案。`_reply_channel` 加 `origin` 態，並讓 origin **沿派工鏈傳遞**（少了這步解不了問題：被派工的 worker 從沒收到過使用者訊息）；排程／系統來源則清掉 origin，避免日報污染對話 topic。另新增 **`_builtin:ingest-queue`**：機械掃出「檔名尚未出現在 index.md」的原始檔，把清單當成任務內容發出去 —— 把「請沉澱知識」這種開放式任務變成有明確輸入的工作。守門測試 25 個 |
