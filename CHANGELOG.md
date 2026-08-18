@@ -6,6 +6,93 @@
 
 ---
 
+## [1.4.0] — 2026-08-18
+
+兩個功能，都來自 slot 的回報。**minor 跳號**是因為第一項改變了既有的回覆路由行為。
+
+### 🎯 回覆回到「使用者發問的地方」，不再固定回 agent 的歸屬 topic
+
+**回報**：「對話在管家指定 agent 後卻會回到 topic，對使用感受不好 —— 大家習慣在 General 對話。」
+
+**根因**：回覆的目的地一直是 `_resolve_output_topic(instance)` ——
+**agent 的歸屬**（自己的 topic，或 worker 所屬 leader 的 topic），
+而不是**對話發生的地方**。inbound 的 `message_thread_id` 有被讀到
+（`telegram.py`），但只用來判斷「誰該處理」，沒有留下來當回覆目的地。
+`_reply_channel` 只有 `private` / `topic` 兩態 —— 套件裡**沒有「回原處」這個概念**。
+
+這不是 bug，是取捨：原意是「訊息歸類」，同一 agent 的輸出集中在一個 topic 好找歷史。
+**問題是使用者的心智模型不同** —— 使用者想的是「我在跟這個群講話」，
+系統想的是「每個 agent 有自己的辦公室」。而 `general_topic: true` 的設計是
+**只有總機坐在 General**，所以 General 本來不預期出現別人的發言。
+但 General 就是大廳，大家自然在大廳講話 —— 那不是壞習慣，是動線本來就該這樣。
+
+**修法**：`_reply_channel` 加第三態 `origin`。判準是**有沒有人正在那個 topic 等**：
+
+| 情境 | 回哪裡 |
+|------|--------|
+| 使用者在某 topic 發問（含 General） | **回同一個 topic** |
+| 由該次發問**派工出去的下游** | **同上**（origin 沿派工鏈傳遞） |
+| 排程 / 自主輸出 | 維持歸屬 topic —— 「歸類」的價值不變 |
+
+> 🔴 **派工鏈的傳遞是關鍵**，少了它這個修法解不了回報的問題：
+> 使用者在 General 對入口 agent 發問，入口再 `send_to_instance` 派給 worker ——
+> **worker 這一側從來沒收到過使用者訊息**，`_reply_channel` 是預設值 `topic`。
+> 所以 `/api/send` 會把來源的 origin 傳給目標。
+>
+> 反向也處理了：`source` 是 `scheduler` / `system` 時**清掉** origin。
+> 不清的後果是「使用者上午問過一次，之後每天的排程日報都被塞進他當時發問的 topic」——
+> 那不是對話連續，是污染。
+
+**這個區分套件裡本來就有先例** —— `last_inbound_source`（`user` vs `system`，1.2.16 為了
+區分 `AWAITING_REPLY` / `IDLE` 而加）就是同一個概念。不需要新的追蹤機制。
+
+**刻意不做的**：兩邊都發（General + agent topic）。訊息數翻倍會踩 rate limit，
+而 General 變雜訊區之後使用者還是只看一個地方。
+
+### 📚 新增 `_builtin:ingest-queue` —— 把開放式任務變成有明確輸入的清單
+
+**回報**：「自我成長機制存在但處於休眠狀態。」現象正確，歸因可以更精確。
+
+不是「沒有新任務 = 沒有新學習」，而是**沉澱被設計成一個沒有明確輸入的任務**：
+排程說「請把學到的寫進 `knowledge/raw/`」，agent 收到後得自己回想今天學到什麼 ——
+而它的 session 可能已經 compact 過，回想不了。
+
+> 🔴 **而下游會回報成功**：ingest job 掃自己提詞裡寫死的路徑、找不到新檔、
+> 回報「新增 0 篇」—— 看起來一切正常。
+> 實測有個部署的 ingest 提詞只寫 `agents/*/knowledge/raw/`，
+> 而待萃取的 309 個原始檔在**根目錄的** `knowledge/github/raw/`
+> → **永遠不在掃描範圍內，而 job 照樣回報成功。掃不到東西卻回報成功 = 假綠燈。**
+> 路徑寫死在提詞裡就會發生這種事，所以改由套件掃。
+
+**這個 job 只做一件事**：機械掃出「檔名尚未出現在同櫃 `index.md`」的原始檔，
+把**清單本身**當成任務內容發出去。萃取仍然由 agent 做（那需要 LLM）。
+
+```
+現在： 「請沉澱知識」                     → agent 不知道從哪開始
+之後： 「這 3 個檔還沒 ingest：A、B、C」   → 有明確輸入
+```
+
+```yaml
+- name: ingest-queue
+  cron: "0 22 * * *"
+  target: _builtin:ingest-queue
+  prompt: "librarian-agent:5"      # <agent>:<每次幾個>，預設 5
+```
+
+三個實作決策：
+
+1. **判斷依據是「檔名有沒有出現在 `index.md`」**，刻意不用 mtime 或狀態檔 ——
+   mtime 會因 `git pull` / `cp` 全體更新，一次噴出幾百個假新檔；
+   狀態檔會與實際 index 漂移，而 `index.md` 本來就是知識庫的真相來源。
+2. **掃描範圍含根目錄與各 instance 的 `working_directory`** —— 不是只掃 `agents/*/`（見上）。
+3. **有批量上限（預設 5）** —— 一次丟 309 個檔跟丟 0 個一樣沒用，都會讓 agent
+   不知從何下手。**沒有待處理時不叫醒任何人**（無效喚醒會 spawn lazy worker，有成本）。
+
+### 測試
+
+`tests/test_origin_routing.py` 11 個 + `tests/test_ingest_queue.py` 14 個。
+全量 **1504 passed**。
+
 ## [1.3.3] — 2026-08-18
 
 ### 🔴 重啟這件事有四套機制，而看不出哪套在生效
