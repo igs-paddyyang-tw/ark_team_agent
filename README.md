@@ -5,7 +5,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.2-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.3.3-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 [![Tests](https://img.shields.io/badge/tests-1417%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
@@ -71,7 +71,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.2/ark_team_agent-1.3.2-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.3/ark_team_agent-1.3.3-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝並在 `PATH`
@@ -601,6 +601,7 @@ curl -s localhost:13030/api/health          # 🔴 看版本號
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.3.3** | 2026-08-18 | 🔴 **重啟有四套機制，看不出哪套在生效** —— 回報說「TG 重啟壞了，flag 沒人讀」；實測重啟是好的（靠 SIGTERM + systemd，PID 會換），但程式碼裡看得到三個 flag 讀取者、而它們在現行部署都沒在跑，磁碟還躺著幾天前的殘留 flag —— 任何人都會誤判。新增 `restart.py` 單一入口：偵測 supervisor（`INVOCATION_ID` / `ARK_TEAM_AGENT_WRAPPER`）、**flag 只在真的有消費者時才寫**、啟動與收尾清殘留、**沒有 supervisor 時不再假裝會重啟**。順帶消除 `telegram.py` / `api.py` 兩份不一致的重複實作。守門測試 15 個 |
 | **1.3.2** | 2026-08-18 | 🔴 **`style="report"` 是 raw passthrough** —— agent 回覆裡的 `<260>` 被 TG 當未知標籤 → 整則 400；而 fallback 的 `_strip_html()` 會把那段**直接刪掉**，於是訊息送達、數值卻從報告裡無聲消失。改用白名單 `_sanitize_tg_html()`（TG 支援的 16 標籤留、其他 `<>&` 跳脫），並驗屬性（`if x <b then y> 0` 的 `b` 是合法標籤名，只驗名會把句子吃成標籤）＋保證結構平衡。`style="chat"` 未動。守門測試 38 個 |
 | **1.3.1** | 2026-08-17 | 🔴 **三個部署共 21 個 agent 全程沒有日誌** —— `run_team()`（README 教大家用的公開入口）從不初始化 logging，只有走 CLI 的 nana 有 INFO；實測近一小時 nana 238 行、其餘三個 **0 行**。另含 `TEAM.md` 指揮鏈附註實際編制（nana 有兩個 admin，圖上看不出來）、`scheduler` drift 目標不再寫死 `cto-agent`、`init` 新增 `--entry-name`，以及修掉 `init` 在**全新環境必定失敗**的 `UnboundLocalError`（1.3.0 與更早皆有，因既有部署不再跑 init 而未被發現）|
 | **1.3.0** | 2026-08-17 | 🚚 **開發環境遷移：nana-team-agent → paddy-team-agent**。功能與 1.2.26 完全相同（wheel 187/187 逐檔一致，唯一差異是 `__version__` 那行）—— minor 跳號唯一的意義是標記 build 來源已遷移。Release repo 與 `pip install` URL 機制不變 |

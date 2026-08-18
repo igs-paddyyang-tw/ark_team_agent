@@ -6,6 +6,61 @@
 
 ---
 
+## [1.3.3] — 2026-08-18
+
+### 🔴 重啟這件事有四套機制，而看不出哪套在生效
+
+**回報**：「TG 觸發重啟的功能壞了 —— admin-agent 會 touch `restart.flag`，但沒人讀它。」
+
+**結論是錯的** —— 實測 `/api/restart-service`（與 TG `/restart` 同一條路徑）：
+PID `405204 → 426704`、uptime 歸零、5/5 alive。**重啟一直是好的**，因為
+`_do_restart()` 除了寫 flag 還會 `os.kill(getpid(), SIGTERM)`，
+Linux 上由 systemd `Restart=always` 拉起。**flag 不是機制，SIGTERM 才是。**
+
+**但推論完全合理，所以這是套件的問題**：
+
+| 環境 | 實際靠什麼 | `restart.flag` |
+|------|-----------|---------------|
+| Linux + systemd（六個生產部署全是這個） | **SIGTERM → `Restart=always`** | 沒人讀，寫了只是垃圾 |
+| `start-team.sh` / `.bat` | wrapper 的 while loop | **必要** |
+| Windows 前景 | `team.py` 的 win32 輪詢分支 | **必要** |
+| `watchdog.py` | 它自己會讀 | **必要** —— 但**沒有任何部署在跑它** |
+
+程式碼裡看得到三個 flag 讀取者，而它們在現行部署裡都沒在執行；
+磁碟上還躺著 **2026-08-14 的殘留 flag**（nana / aiops / director 各一個）。
+任何人看到都會得出「壞了」的結論。
+
+> 🔴 **治本不是補一個讀取者，是讓「flag 存在」重新變成有意義的訊號。**
+
+### 修法
+
+**新增 `restart.py` —— 重啟的單一入口。**
+
+1. **`detect_supervisor()`** 判斷「退出後誰會拉起我」，依據都是外部事實：
+   `ARK_TEAM_AGENT_WRAPPER`（wrapper 自己設）、`INVOCATION_ID`（**systemd 對每個
+   unit 都會設**，比找 `systemctl` 執行檔可靠 —— 後者只證明工具在，
+   不證明我被它管）、`sys.platform`。
+2. **flag 只在真的有消費者時才寫。** systemd 環境不寫，並順手清掉既有殘留。
+3. **啟動時清殘留 + 收尾時清**（但 **wrapper 環境的收尾不清** —— 那份正是要給
+   while loop 讀的）。啟動 log 會印一行 `重啟機制：systemd（…）`，
+   讓下一個人不用猜。
+
+**行為改變：沒有 supervisor 時不再假裝重啟。**
+原本 TG 一律回「🔄 重啟中… watchdog 將在數秒內拉起服務」——
+但本機**根本沒有 watchdog 進程**，而在前景執行的環境下 SIGTERM 只會讓服務
+**關掉不再起來**。現在會明確講「服務即將停止，且不會自動起來」並給出解法。
+
+**順帶消除一份重複實作**：`telegram.py` 與 `api.py` 各有一份「寫 flag + SIGTERM」，
+延遲還不一致（1.0s vs 0.5s）。兩份必然漂移 → 收斂成一個，並用掃描測試守門。
+
+**`watchdog.py` 標明是「可選的替代 supervisor」** —— 沒有任何地方 import 它，
+只能手動 `python -m ark_team_agent.watchdog`。它 spawn 子進程時會設
+`ARK_TEAM_AGENT_WRAPPER=1`（因為它自己就是 flag 的消費者）。
+
+守門測試 `tests/test_restart_mechanism.py` **15 個**（含四種 supervisor 環境
+各自的 flag 行為、殘留清理不得拋例外、不得再有第二份重啟邏輯）。
+全量 **1440 passed**。
+
 ## [1.3.2] — 2026-08-18
 
 ### 🔴 `style="report"` 是 raw passthrough —— 回覆裡的 `<260>` 讓整則訊息被 TG 拒收
