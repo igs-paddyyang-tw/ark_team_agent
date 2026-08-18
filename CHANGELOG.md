@@ -6,6 +6,64 @@
 
 ---
 
+## [1.4.5] — 2026-08-18
+
+### 新增 qa 專屬 SOUL/BRAIN 範本
+
+實機 log 顯示 `Using SOUL.md template for qa-agent: .../templates/agents/coder/SOUL.md`
+—— **測試工程師拿到 coder 的人格**。既有部署無害（`soul_md` policy 是 `once`，
+不覆寫既有檔案），但**新部署的 qa agent 會是個 coder**。
+
+範本挑選邏輯本來就會**先試 instance 名**（`qa-agent` → `qa/`），
+所以只要補上 `templates/agents/qa/` 就生效，不需要改程式。
+
+內容不是複製 coder 改標題 —— 寫的是 QA 真正該有的判準，
+其中「假綠燈的常見形狀」直接來自本套件修過的缺陷：
+
+- 掃描目標路徑不存在 → 掃 0 個檔卻回報 ✅
+- 只驗寫法沒驗實際值 → 擋得住舊寫法，擋不住「出口組錯」
+- 提詞裡寫死的路徑與實際資料位置不同 → 永遠掃不到，但回報成功
+- 測試被自己的註解命中（掃描式測試要排除註解與 docstring）
+- 語法檢查通過但結構錯誤（插入位置不對造成死碼）
+
+### 🔴 順手抓到的更嚴重問題：`leader` 映到不存在的範本
+
+```python
+role_map = {"admin": "admin", "leader": "tech-lead", ...}   # ← tech-lead 不存在
+```
+
+`templates/agents/tech-lead/` **從來沒有過**，而 `leader/` 就躺在旁邊沒人用。
+
+**為什麼一直沒被發現**：挑選邏輯先試 instance 名，所以叫 `leader-agent` 的
+碰巧命中 `leader/`，映射表根本沒被走到。但 leader 若叫別的名字
+（`pm-agent`、`tech-agent`…）→ `pm/` 不存在 → 退回 `tech-lead/` 也不存在
+→ **`soul_content` 是空的，SOUL.md 不會被寫出來**。沒有錯誤訊息，
+只是那個 agent 沒有人格檔。
+
+> 🔴 **而既有測試把這個缺陷寫成了規格**：
+> `test_leader_defaults_tech_lead` 斷言 `== "tech-lead"`，綠燈好幾個月 ——
+> 因為它驗的是「映射表的值」，**沒有驗那個值指向的範本是否存在**。
+>
+> 💡 **驗「設定值等於某字串」時，要順手驗「那個字串指到的東西真的在」** ——
+> 否則測試會保護一個壞掉的映射。
+
+### 測試
+
+新增 `tests/test_agent_templates.py` **25 個**完整性守門：
+每個 `role_map` 目標必須存在、每個範本都要有 SOUL+BRAIN、範本不可為空、
+qa 範本必須真的在談測試（不是複製 coder）、
+以及「instance 名的查找必須在 role fallback 之前」
+（順序反了的話新增 `qa/` 也不會生效）。
+
+全量 **1593 passed**。
+
+### ℹ️ 已知範圍：其他常見 worker 仍借用 coder
+
+`security` / `architect` / `design` / `researcher` / `tester` 都沒有專屬範本 →
+借用 `coder`。**沒有擅自新增** —— 人格內容需要真的想清楚該有什麼判準，
+複製貼上反而製造「看起來有、實際上沒對」的假象。
+需要時用 `team.yaml` 的 `template` 明示，或另案補範本。
+
 ## [1.4.4] — 2026-08-18
 
 **兩個 1.4.3 的漏，都是從實機 log 抓到的，不是靠讀 code 想出來的。**

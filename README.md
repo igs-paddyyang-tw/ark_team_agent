@@ -5,7 +5,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.4.4-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.4.5-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 [![Tests](https://img.shields.io/badge/tests-1417%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
@@ -71,7 +71,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.4.4/ark_team_agent-1.4.4-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.4.5/ark_team_agent-1.4.5-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝並在 `PATH`
@@ -601,6 +601,7 @@ curl -s localhost:13030/api/health          # 🔴 看版本號
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **1.4.5** | 2026-08-18 | 新增 **qa 專屬 SOUL/BRAIN 範本**（原本測試工程師拿到 coder 人格 ——既有部署無害因為 policy=once，但新部署會是個 coder）。🔴 順手抓到更嚴重的：`role_map` 把 `leader` 映到**不存在的 `tech-lead`**，而 `leader/` 躺在旁邊沒人用 —— leader 若不叫 `leader-agent` 就**完全沒有 SOUL.md 且不報錯**。**而既有測試把這個缺陷寫成了規格**（斷言 `== "tech-lead"`，綠燈好幾個月）。新增 25 個範本完整性守門 |
 | **1.4.4** | 2026-08-18 | 補 1.4.3 兩個漏（**都是從實機 log 抓到的**）：群組路徑的 `@xxx` 沒被清掉（只改了 `text`，而實際送出的是 `delivered_text`——**同一件事兩條路徑結果不同就是漏改的訊號**）；`reply_to_origin` 開啟時不再發「✅ 已轉給 XXX」（答案回到同一視窗，那句話沒有路可指了），但**保留 lazy spawn 的「正在啟動中」**——它解釋了為什麼要等 |
 | **1.4.3** | 2026-08-18 | **群組也解析 `@mention`** —— 在此之前只有私訊路徑會（`ChatRouter`），群組走 `planner` 而它**完全不看 `@`**。所以在 General 打 `@qa` 是靠入口 agent 的 LLM 讀懂那個 `@` 再派工，代價是順序倒置（agent 的 ack 產生於派工之後，被派工者可能秒答）、多一次 LLM、可能判錯人、多喚醒一個 agent。`@all`／解析失敗／多目標**刻意交回 planner**（不靜默丟訊息）。守門測試 10 個 |
 | **1.4.2** | 2026-08-18 | **私訊問 → 回私訊** —— `reply_to_origin` 現在涵蓋兩種場景。1.4.0/1.4.1 只處理群組 topic，而私訊 `@mention` 別人時答案會跑到群組的某個 topic（同一類問題：回覆去「agent 的家」而不是「你問的地方」）。`_origin_topic` 的值從 `int` 改成 `(kind, dest)` —— 一個概念一個資料結構，不開第二個 dict。⚠️ 私訊目的地記的是使用者那個 `chat_id`，不是 agent 自己的 `private_chat` 設定（被派工的 worker 通常沒有）|
