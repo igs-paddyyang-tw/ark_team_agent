@@ -1,12 +1,70 @@
 # ark-team-agent
 
-> Multi AI Agent 團隊管理框架，基於 [Kiro CLI](https://kiro.dev) 後端，支援 Telegram Bot 互動、跨 Agent 協作與自主拍板決策。
+> **把多個 Kiro CLI 開成一個會分工的團隊。**
+> 你在 Telegram 講一句話，它決定誰該做、派下去、追蹤進度、把結果收回來給你。
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.3.2-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Tests](https://img.shields.io/badge/tests-1417%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
+**規模**：52 模組 / 約 18,500 行 / 1417 個測試 / 6 個生產部署
+
+---
+
+## 這個套件解決什麼問題
+
+一個 AI CLI（Kiro / Claude Code / Codex…）一次只能陪你做一件事。你要它同時盯著服務、寫規格、跑測試、產日報，就得開好幾個終端機，然後**自己當那個調度員** —— 記得誰在做什麼、把 A 的產出貼給 B、發現某個視窗已經卡死兩小時。
+
+`ark-team-agent` 把那個調度員自動化：
+
+| 你原本要做的事 | 套件怎麼處理 |
+|---|---|
+| 開 N 個終端機、記得誰在做什麼 | 一份 `team.yaml` 宣告編制，daemon 管生命週期 |
+| 把 A 的產出貼給 B | MCP 工具 `send_to_instance` / `delegate_task`，agent 自己傳 |
+| 盯著某個視窗有沒有卡死 | hang 偵測 + 崩潰重啟 + `degraded` 事件簿 |
+| 切視窗看進度 | Telegram：每個 agent 一個 Topic，訊息自動歸類 |
+| 記得昨天決定了什麼 | 知識庫 + 拍板紀錄 + 每日日報 |
+| 擔心 API 費用爆掉 | `cost_guard` 日限額，逐 agent 可獨立設 |
+
+**不需要寫程式。** 一份 YAML + 一個 5 行的 `start.py`。
+
+### 適合 / 不適合
+
+| ✅ 適合 | ❌ 不適合 |
+|---|---|
+| 長期常駐、有多個平行職能的工作（維運 + 開發 + 分析） | 一次性的單一任務（直接用 CLI 更快） |
+| 想用手機（Telegram）指揮的場景 | 需要低延遲同步回應的互動 |
+| 願意讓 agent 各自累積記憶與知識 | 要求每次都從乾淨狀態開始 |
+
+---
+
+## 30 秒理解架構
+
+```
+                    ┌──────────────── Telegram ────────────────┐
+   你 ──私訊──────► │  入口 agent（意圖分類 / 路由）             │
+                    │  Topic #2 CTO   Topic #3 CEO   Topic #4… │
+                    └──────────────┬───────────────────────────┘
+                                   │ python-telegram-bot
+                    ┌──────────────▼───────────────────────────┐
+                    │        ark-team-agent daemon             │
+                    │  ┌────────┬─────────┬──────────┬──────┐  │
+                    │  │ 生命週期│ 排程引擎 │ 拍板迴路 │ 成本 │  │
+                    │  └────────┴─────────┴──────────┴──────┘  │
+                    │        HTTP API :13030 ── Web Dashboard  │
+                    └──────┬────────┬────────┬─────────┬───────┘
+                           │        │        │         │  asyncio subprocess
+                    ┌──────▼──┐ ┌───▼───┐ ┌──▼────┐ ┌──▼─────┐
+                    │kiro-cli │ │kiro-  │ │kiro-  │ │kiro-cli│
+                    │ admin   │ │cli PM │ │cli QA │ │ …      │
+                    └────┬────┘ └───┬───┘ └───┬───┘ └───┬────┘
+                         └──────────┴─── MCP ┴─────────┘
+                              （agent 之間互相傳話、查知識庫）
+```
+
+**一句話**：daemon 用 `asyncio.create_subprocess_exec` 開 N 個 `kiro-cli` 子進程，每個有自己的工作目錄與人格檔；它們透過套件內建的 **MCP server** 互相通訊，透過 **Telegram** 跟你通訊。
 
 ---
 
@@ -16,28 +74,36 @@
 pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.2/ark_team_agent-1.3.2-py3-none-any.whl
 ```
 
-**需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝
+**需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝並在 `PATH`
+
+> ⚠️ **本 repo 是 private** —— 上面的 URL 匿名抓會回 **404**（不是 403，所以看起來像不存在）。
+> 需要憑證時用 API 端點：
+>
+> ```bash
+> gh release download v1.3.2 --repo igs-paddyyang-tw/ark_team_agent -p '*.whl'   # 需 GH_TOKEN
+> ```
+>
+> 或 `curl` + **API url** + `Accept: application/octet-stream`（缺這個 header 會拿到 JSON metadata，
+> 而它會被存成 `.whl` → 安裝時報看不懂的錯）。**存檔要用原始檔名**，`uv` 會拒絕 `w.whl` 這種名字。
 
 ---
 
 ## 快速開始
 
 ```bash
-# 1. 安裝套件
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.3.2/ark_team_agent-1.3.2-py3-none-any.whl
-
-# 2. 初始化專案結構
+# 1. 產生鷹架（team.yaml、steering、knowledge、skills…）
 ark-team-agent init
 
-# 3. 準備 team.yaml + .env
-cp team.yaml.example team.yaml   # 或自行建立
+# 2. 填 .env
 echo "TELEGRAM_BOT_TOKEN=your-token" > .env
+
+# 3. 改 team.yaml：填 group_id、allowed_users、定義你的 agent
 
 # 4. 啟動
 python start.py
 ```
 
-**最簡 start.py：**
+**最小 `start.py`：**
 
 ```python
 import asyncio
@@ -51,170 +117,481 @@ if __name__ == "__main__":
     asyncio.run(run_team(Path("team.yaml")))
 ```
 
+**最小 `team.yaml`：**
+
+```yaml
+channel:
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  group_id: -100xxxxxxxxxx        # Telegram 群組（需開啟 Topics）
+  general_topic_id: 1
+
+access:
+  mode: locked                    # locked=白名單 / group=群組訊息全放行
+  allowed_users: [123456789]      # 你的 Telegram user ID（/start 會告訴你）
+
+defaults:
+  backend: kiro-cli
+  model: auto
+
+team_doc:                         # 🔴 建議設定，見下方「為什麼要設 team_doc」
+  command_chain: "使用者 → admin → leader → worker"
+  workflow: "leader(規格) → worker(實作) → qa(驗收) → leader(結案)"
+
+instances:
+  admin-agent:
+    working_directory: .
+    private_chat: 123456789        # 私訊入口（意圖分類 + 路由）
+    role: admin
+    description: "👑 管家 — 服務管理、團隊指揮"
+
+  leader-agent:
+    working_directory: agents/leader-agent
+    role: leader
+    topic_id: 2
+    description: "🧠 軍師 — 需求分析、派工、驗收"
+
+  coder-agent:
+    working_directory: agents/coder-agent
+    role: worker
+    group: leader-agent            # 輸出發到 leader 的 topic
+    topic_id: 3
+    persistent: false              # lazy spawn：需要才啟動
+    idle_timeout_minutes: 30       # 閒置回收
+    description: "💻 工匠 — 全端開發"
+```
+
+---
+
+## 核心概念
+
+### ① Instance 與四層角色
+
+每個 agent 是一個 **instance** —— 一個獨立的 `kiro-cli` 子進程 + 一個工作目錄 + 一份人格檔（`SOUL.md`）。
+
+| Role | 定位 | 通訊權限 |
+|------|------|---------|
+| `admin` | 你的入口與最高管理 | 可發給**所有人** |
+| `manager` | 跨組協調、方針 | 可發給所有 group 成員 |
+| `leader` | 拆解需求、派工、驗收 | 可發給所有人（除 admin） |
+| `worker` | 執行專業職能 | 可發給 leader 與其他 worker |
+
+**支援多 admin / 多 leader**。角色只決定**通訊權限與預設行為**，不限制數量。
+
+### ② Channel：Telegram 就是操作介面
+
+- **私訊** → 入口 agent（`private_chat` 那個）做意圖分類，決定自己回還是轉派
+- **群組 Topic** → 每個 agent 一個 Topic，訊息天然歸類，不會混在一起
+- **`group` 欄位** → worker 的輸出發到所屬 leader 的 Topic（而不是自己的），維持組內對話連續
+- **`@mention`** → `@coder 幫我改這個 API` 直送指定 agent，不經路由
+
+### ③ MCP：agent 之間怎麼傳話
+
+套件內建一個 **MCP server（stdio JSON-RPC，手寫、不依賴 mcp SDK）**，掛給每個 agent。**17 個工具**：
+
+| 分類 | 工具 |
+|------|------|
+| 對你回話 | `reply` · `reply_file` · `reply_task_image` |
+| 對內回報 | `log_to_leader` |
+| 跨 agent | `send_to_instance` · `delegate_task` · `smart_delegate` · `broadcast_all` |
+| 團隊狀態 | `query_team_status` |
+| 任務板 | `create_task` · `update_task` · `list_tasks` |
+| 知識庫 | `wiki_query` · `wiki_ingest` |
+| 決策 | `decision_digest` · `decision_overturn` |
+| 成本 | `record_spend` |
+
+> **`reply()` 是對使用者的唯一出口** —— 中間過程走 `log_to_leader()`。
+> 這條規則寫在產生的 steering 裡，agent 會遵守。
+
+你也可以在 `team.yaml` 宣告**外部 MCP server**（`github` / `bigquery` / `fetch`…）並逐 agent 掛載：
+
+```yaml
+mcp_servers:
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" }
+
+defaults:
+  mcp: [fetch]            # 全體預設
+
+instances:
+  coder-agent:
+    mcp: [github]         # 實際掛載 = (defaults.mcp ∪ mcp) − mcp_exclude
+```
+
+> 🔴 **agent 完全不繼承你 `~/.kiro/settings/mcp.json` 的設定** —— 那份只服務你自己的 kiro session。
+> agent 要用什麼工具，必須在 `team.yaml` 明確宣告。
+
+### ④ 生命週期：daemon 在背後做的事
+
+| 機制 | 行為 |
+|------|------|
+| **7 種狀態** | `stopped` · `starting` · `running` · `crashed` · `paused` · `awaiting_reply` · `idle` |
+| **崩潰重啟** | 時間窗計數 + 遞增冷卻，**會停手**（不無限重啟） |
+| **hang 偵測** | `running` 太久沒動靜 → 通報；`awaiting_reply`／`idle` 不誤報 |
+| **MCP 預檢** | 啟動前驗證 server 可執行、env 內的路徑存在 → 單一壞 server 不再擊倒整個 agent |
+| **lazy spawn** | `persistent: false` 的 agent 需要才啟動，閒置 `idle_timeout_minutes` 後回收 |
+| **就緒判定** | 認 `All tools are now trusted`，**不認** MCP 初始化進度行（那行在 server 都沒起來時就出現） |
+
+> 💡 **`idle` 為什麼要獨立一個狀態**：`awaiting_reply`（有人在等我）與 `idle`（做完了沒待辦）
+> 對 hang 偵測的意義相反。原本兩者混用，導致 agent 一回覆就關掉偵測 —— 真掛死幾小時沒人知道。
+
+---
+
+## 功能詳解
+
+### 🎯 派工與任務板
+
+```
+你：「幫我把登入 API 加上 rate limit」
+ ↓ 入口 agent 意圖分類 → delegate_task("leader-agent", …)
+leader：拆解 → create_task(…) → delegate_task("coder-agent", 規格)
+coder：實作 → update_task(status=review) → send_to_instance("qa-agent", …)
+qa：驗收 → update_task(status=done) → log_to_leader(結果)
+leader：reply("✅ 已完成，QA 通過")
+```
+
+任務板是 `tasks/board.json` + `tasks/items/`，可用 `list_tasks` 查、Telegram `/tasks` 看。
+
+**`smart_delegate`** 會依 `description` 自動挑人，不用你記誰負責什麼。
+
+### 🤝 P2P 與逾時處理
+
+worker 之間可直接通訊（`p2p.enabled`，**預設關閉**）。可設 `max_rounds`（同一對 agent 最多 N 輪，
+超過就升級到 General topic）、`daily_limit_per_agent`、`cc_leader`（每輪 CC 給 leader —— **預設關**，多 leader 團隊會變純噪音，要稽核軌跡再 opt-in）。
+
+**`peer_reply_timeout_minutes`（預設 15）** —— A 請 B 做事後 N 分鐘沒回應，系統會主動 nudge A「B 沒回你，要重試還是改派」。**不會靜默卡住。**
+
+### ⚖️ 拍板迴路（Decision Loop）
+
+`config/authority-matrix.yml` 定義誰能決定什麼：
+
+| 層級 | 行為 |
+|------|------|
+| **L1** | agent 自決 |
+| **L2** | 依 domain 找到的決策者拍板（如 `tech→admin`、`product→leader`） |
+| **L3** | 超過門檻（例如日預算的 20%）→ 升級給你，Telegram 送**拍板卡** |
+
+- 決策者由矩陣**推導**，不寫死角色名
+- 逾時未拍板 → 自動轉呈
+- **每日日報 + 翻案按鈕**（24 小時窗口）—— `decision_digest` / `decision_overturn`
+
+### ⏰ 排程引擎
+
+`scheduler.yaml`，完整 cron（含日/月/星期）：
+
+```yaml
+jobs:
+  - name: hourly-check
+    cron: "0 9-21 * * *"
+    target: admin-agent
+    prompt: '回報團隊狀態，style="report"'
+
+  - name: memory-housekeeping
+    cron: "30 3 * * 0"
+    target: _builtin:memory-consolidate
+```
+
+**3 個內建 job（`_builtin:` 前綴，確定式、無 LLM 成本）**：
+
+| target | 做什麼 |
+|--------|--------|
+| `_builtin:spec-validator` | Code ↔ Spec 一致性驗證，產 drift report |
+| `_builtin:memory-consolidate` | `memory/daily/*.md` 超過 14 天搬進 `archive/`、`steering/MEMORY.md` 的舊日期分節歸檔、`memory.md` 超標記 `degraded` |
+| `_builtin:output-ttl` | 依分類 TTL 掃 `output/`，超期記 `degraded`（**只提醒不刪**） |
+
+### 📚 知識庫
+
+三層，權限不同：
+
+| 層 | 路徑 | 規則 |
+|----|------|------|
+| 私有結構化 | `knowledge/{agent}/wiki/` | **唯讀** —— 只由 ingest 產出，禁止手寫 |
+| 私有原始素材 | `knowledge/{agent}/raw/` | 只新增，不改既有檔 |
+| 跨 agent 共用 | 不是檔案，是 `wiki_query` | 多櫃子掃描，查無會回診斷（不是空白） |
+
+查詢順序：私有 → 共用 → 外部搜尋，**不可跳層**；查無就說不知道。
+`knowledge_search_order` 可指定櫃子優先序。
+
+> **架構前提：每個 agent 獨立運作與發展，共用的只有知識庫本身** ——
+> 不靠 symlink、不複製檔案，靠 `wiki_query`。
+
+### 💰 成本控制
+
+```yaml
+cost_guard:
+  daily_limit_usd: 30.0
+  warn_at_percentage: 80
+  timezone: Asia/Taipei
+  per_instance_limits:
+    coder-agent: 10.0      # 超限只暫停這一個，不影響其他人
+```
+
+搭配**模型分工**（零程式，用既有的 per-instance `model`）：
+
+```yaml
+instances:
+  entry-agent:
+    model: auto                            # 入口每則訊息都醒 → 用快的
+  architect-agent:
+    model: claude-opus-4.6                 # 重推理才用強的
+    model_failover: [claude-sonnet-4.6]    # 主模型不可用時降級
+```
+
+### 👥 多使用者隔離
+
+```yaml
+instances:
+  admin-agent:
+    multi_user: true
+    max_user_sessions: 5
+    session_idle_timeout_minutes: 30
+```
+
+per-user 的 session 與工作目錄（`<wd>/sessions/<uid>/`）、per-user 記憶檔。
+LRU 回收，但**不會回收正在等人回話的 session**。
+
+### 📱 Telegram UX
+
+| 指令 | 用途 |
+|------|------|
+| `/start` | 系統介紹 + **你的 Telegram ID** + 授權狀態（未授權者也能查 ID 來申請） |
+| `/status` | agent 分層狀態 + 主程式健康行（版本 / 運行數 / degraded） |
+| `/tasks` | 任務派工狀況 |
+| `/help` | 指令清單 + 完整成員（職責導向，取自 `description`） |
+| `/restart` | 重啟 —— **先跳確認鍵**，按了才執行（限私聊） |
+| `/allow` `/deny` | 動態授權（admin only，免重啟） |
+
+還有：長訊息自動分段（4000 字）、ANSI 殘留清洗、ToolTracker 進度單行摘要、
+`reply(template=...)` 具名模板（`news-daily` / `ops-report` / `status-report` / `task-dispatch` / `error-alert`）。
+
+**HTML 安全**：agent 輸出一律經過處理才送出 ——
+`style="chat"` 是 escape-first（Markdown → 平衡的 HTML），
+`style="report"` 走**標籤白名單**（agent 可自己寫 `<b>`，但 `<260>`、`<=5%`、`a<b`
+這類非標籤文字會被跳脫，且保證標籤平衡）。
+
+### 🧩 內建 Skills（11 個）
+
+`init` 會把這些放進每個 agent 的 `.kiro/skills/`：
+
+`ark-grill-me`（拷問設計） · `ark-superpowers`（產 spec/design/plan） ·
+`ark-spec-executor`（執行 plan） · `ark-code-spec-validator`（一致性驗證） ·
+`ark-skill-creator` · `ark-wiki-engine` · `ark-md-report` · `ark-html-report` ·
+`ark-news-daily` · `ark-agent-cli` · `ark-telegram-sender`
+
+`kiro_files.skills.policy: sync` 可讓 skill 更新下發到既有 agent
+（預設 `once` 只在目錄不存在時複製 —— 那會讓 skill 永久停在首次部署的版本）。
+
+### 🔭 觀測
+
+```bash
+curl -s localhost:13030/api/health
+```
+
+```json
+{"ok": true, "version": "1.3.2",
+ "instances": {"running": 4, "alive": 11, "total": 11},
+ "degraded": []}
+```
+
+- `alive` = `running` + `awaiting_reply` + `idle`；`running` 只算正在跑的
+  → **`4/11` 通常是 lazy spawn 的正常狀態，不是故障**（看日誌的 `Idle eviction` 行確認）
+- **`degraded[]` 是事件簿**：`mcp_startup_failed:*`、`restart_interrupted:*`、
+  `deferred_message:*`、`memory_oversized:*`、`slow_startup:*`…
+  出現不代表壞掉，代表**有事情你該知道**
+
+另有 22 個 HTTP 端點與一個 Web Dashboard（`health_port + 300`）。
+
 ---
 
 ## 產出結構
 
-分兩個時機產生檔案：`init` 一次性鷹架、`team start` 每次啟動自動產生。
+分兩個時機：`init` 一次性鷹架、`team start` 每次啟動同步。
 
-### `ark-team-agent init` — 一次性鷹架（`if not exists`，可安全重跑）
+### `ark-team-agent init` —— 一次性（`if not exists`，可安全重跑）
 
 ```
 {home}/
 ├── team.yaml · scheduler.yaml · README.md · .env.example · .gitignore
-├── start-team.sh / .bat        # 含 restart.flag 自動重啟迴圈
-├── .kiro/steering/             # SOUL · BRAIN · CODE · MEMORY · TEAM · USER.md
-├── config/authority-matrix.yml # 決策權限矩陣 L1/L2/L3
-├── knowledge/                  # 完整子結構（schema/index/log + wiki + raw）
-├── docs/                       # specs designs plans reports one-pagers references
-├── prompts/                    # 5 派工模板
-└── tasks/                      # board.json + items/
+├── start-team.sh / .bat            # 含 restart.flag 自動重啟迴圈
+├── .kiro/steering/                 # SOUL · BRAIN · CODE · MEMORY · TEAM · USER.md
+├── config/authority-matrix.yml     # 決策權限矩陣 L1/L2/L3
+├── knowledge/                      # schema/index/log + wiki + raw
+├── docs/                           # specs designs plans reports one-pagers references
+├── prompts/                        # 5 個派工模板
+└── tasks/                          # board.json + items/
 
-{working_directory}/            # 每個 agent（team.yaml instances 迴圈）
-├── knowledge/ · docs/ · memory/
-└── .kiro/                      # steering(SOUL/BRAIN/CODE/MEMORY/USER) + agents/{name}.json + skills/(6)
+{working_directory}/                # 每個 agent 各一份
+├── AGENTS.md                       # 給非 Kiro 工具（Claude Code / Codex）的入口導覽
+├── knowledge/ · docs/ · memory/ · scripts/ · artifacts/ · output/
+└── .kiro/  steering + agents/{name}.json + skills/(11)
 ```
 
-內建 6 skills：`ark-grill-me · ark-superpowers · ark-spec-executor · ark-code-spec-validator · ark-skill-creator · ark-wiki-engine`
+> `--entry-name` 可改入口 agent 名（預設 `ark-agent`）。
 
-### `team start` — 每次啟動自動產生／覆寫
+### `team start` —— 每次啟動
 
-> 啟動時 backend 寫的 `.kiro/` 檔位於 **`{home}/instances/{name}/.kiro/`**（kiro-cli 子進程 cwd）。
+| 產出 | policy | 說明 |
+|------|--------|------|
+| `.kiro/steering/TEAM.md` | **always** | 成員表以 `team.yaml` 為唯一真相 |
+| `.kiro/settings/mcp.json` | always | MCP 掛載（+ wrapper 腳本讓 `env` 生效） |
+| `SOUL·BRAIN·CODE·MEMORY·USER.md` | `once` | 刻意的 —— agent 可自行補充而不被覆寫 |
+| `.kiro/agents/{name}.json` | `once` | |
+| `state/*.db` · `topics.json` | 自動 | topic 持久化，重啟不產生孤兒 topic |
 
-| 產出 | policy |
-|------|--------|
-| `.kiro/steering/TEAM.md` | **always（每次覆寫）** |
-| `.kiro/steering/SOUL·BRAIN·CODE·MEMORY·USER.md` | once |
-| `.kiro/settings/mcp.json`（+ wrapper 腳本） | always（可設 skip/once） |
-| `.kiro/agents/{name}.json` | once（可設 skip） |
-| `.kiro/.meta.json` · `instances/{name}/.mcp_hash` · `team.pid` | 每次 |
-| `state/topics.json` | 首次建，之後 restore |
-| `state/*.db` | 自動建立 |
+### ⚠️ 手改無效的檔案
 
-`state/` 下 8 個檔：`conversations · message_queue · message_overflow · events · decisions · costs · sessions`（`.db`）+ `heartbeat`
+- **`TEAM.md`** —— 改成員請改 `team.yaml` 後重啟
+- **`mcp.json`** —— 改 MCP 請改 `team.yaml` 的 `mcp_servers`
 
-### ⚠️ 手改無效（每次啟動被覆寫）
+> 🔴 **`policy: once` 的檔案不會因為升級套件而修好。** 凡是「升級後行為沒變」的怪事，
+> 先查該檔的 policy 是不是 `once`。實測踩過：一份 `TEAM.md` 凍結三個月，
+> 裡面有個早就被移除的幽靈成員，而 14 個 agent 每次對話都吃到它。
 
-- `TEAM.md`：改成員請改 `team.yaml` 後重啟
-- `mcp.json`：改 MCP 注入邏輯在 `backend.py`
-- `AGENTS.md` 自 v1.0.4 起**不再由啟動同步**，改由 `TEAM.md` 承接
+### 為什麼要設 `team_doc`
+
+`TEAM.md` 的「指揮鏈」與「協作流程」兩段由 `team_doc` 產生。**未設就整段省略**（不是留空標題）。
+
+> 🔴 **agent 讀不到 `team.yaml`** —— 它只讀 `TEAM.md` 的最終內容。
+> 所以「缺了指揮鏈」這件事它**既不會察覺、也無法自己補**。
+> 實測稽核六個部署，只有一個設了 —— 其餘團隊的 agent 從來不知道自己在鏈上的位置。
+>
+> 1.3.1 起產生器會在圖下附一行**實際編制**（如「admin×2、worker×7」，因為鏈是角色層級的簡化），
+> 並在鏈與 `instances` 不一致時發 warning（幽靈角色 / 隱形角色）。
 
 ---
 
-## 功能特色
+## 設定參考
 
-### 多 Agent 協調
-- `team.yaml` 定義 agent，4 層角色（admin / manager / leader / worker）
-- 支援多 leader / 多 admin 架構（v1.1.6+）
-- `skip_resume` 可設定：admin/manager 自動接續，worker 預設 fresh start（v1.1.3+）
+### `team.yaml` 頂層
 
-### Group Topic Routing（v1.1.0+）
-- Worker 輸出改發所屬 leader 的 Telegram topic（訊息歸類）
-- 失敗自動 fallback 到 General Topic 並標記
-- P2P 升級優先通知同 group leader
-
-### Telegram Bot
-- Forum Topic 路由、HTML 通報（支援粗體/斜體/刪除線/引用 v1.1.10+）
-- ToolTracker 人性化版面（v1.1.7+）
-- InlineKeyboard、重啟確認按鈕（v1.2.5+）
-- 長訊息自動分段（4000 字上限，v1.1.5+）、出口自動清 ANSI 殘留（v1.2.3+）
-- Reply Template：`reply(text, template=...)` 具名模板 —— `news-daily` / `status-report` / `ops-report` / `task-dispatch` / `error-alert`（v1.2.0+）
-
-#### 指令（v1.2.5 起五指令目標分明）
-
-| 指令 | 用途 |
+| 欄位 | 說明 |
 |------|------|
-| `/start` | 系統介紹 + **你的 Telegram ID** + 授權狀態 + 如何對話（未授權者亦可查 ID 申請）|
-| `/status` | agent 分層狀態 + 主程式健康行（版本 / 運行數 / degraded）|
-| `/tasks` | 任務派工狀況 |
-| `/restart` | 重啟服務 —— **先跳確認鍵，按「確定重啟」才執行**（限私聊）|
-| `/help` | 細部介紹：指令清單 + 完整成員（職責導向，取自 `description`）+ `@mention` 語法 |
-| `/allow` `/deny` | 動態授權管理（admin only，免重啟）|
+| `instances` | 成員定義（見下表） |
+| `channel` | Telegram：`bot_token_env` · `group_id` · `general_topic_id` |
+| `access` | `mode`（`locked` / `group`）· `allowed_users` |
+| `defaults` | 全體預設：`backend` · `model` · `mcp` · `skip_resume`… |
+| `team_doc` | 指揮鏈與協作流程（**建議設定**） |
+| `mcp_servers` | 外部 MCP server 宣告 |
+| `communication` | `peer_reply_timeout_minutes` · `dispatch_context_ttl_minutes` · `tool_detail` · `p2p.*` |
+| `cost_guard` | `daily_limit_usd` · `warn_at_percentage` · `per_instance_limits` |
+| `hang_detector` | 掛起偵測 |
+| `startup` | 啟動策略 |
+| `kiro_files` | 各產出檔的 policy（`always` / `once` / `skip`）與 `skills` 下發 |
+| `knowledge_search_order` | 知識庫櫃子優先序 |
+| `private_chat_routing` | 私訊路由模式（`ark-agent` / `keyword` / `ceo-direct`） |
+| `project_roots` · `health_port` | 專案根、API port |
 
-`@mention` 派工：`@{agent} {需求}` → 直接發給該 agent。
+### `instances.<name>`
 
-### 拍板迴路（Decision Loop）
-- L1 自決 / L2 CEO‑CTO 拍板 / L3 升級
-- ark-agent fallback 拍板（有前例自決、無前例升 Paddy）
-- 每日日報 + 翻案按鈕（24h 窗口）
-- `authority-matrix.yml` 動態推導決策者（v1.1.2+）
+| 欄位 | 說明 |
+|------|------|
+| `working_directory` | **必填** —— agent 的家 |
+| `role` | `admin` / `manager` / `leader` / `worker` |
+| `description` · `display_name` · `tags` | 職責描述（`smart_delegate` 與 `/help` 會用） |
+| `topic_id` · `general_topic` · `private_chat` | Telegram 路由 |
+| `group` | worker 指向所屬 leader |
+| `backend` · `model` · `model_failover` | 後端與模型 |
+| `skip_resume` | `true`=開新對話 / `false`=`--resume` 接續；未設依 role |
+| `persistent` · `idle_timeout_minutes` · `auto_start` | lazy spawn 與回收 |
+| `mcp` · `mcp_exclude` | MCP 掛載 |
+| `task_prefix` · `task_suffix` | 自動包夾訊息（如「只輸出結論、≤3000 字」） |
+| `system_prompt` · `template` | 人格與範本 |
+| `restart_policy` · `startup_timeout_ms` · `cost_guard` · `log_level` | 可靠性與成本 |
+| `multi_user` · `max_user_sessions` · `session_idle_timeout_minutes` | 多使用者隔離 |
 
-### MCP 通訊
-- 15+ tools，跨 Agent P2P / broadcast / wiki
-- `send_to_instance` peer-reply timeout 語意回傳（v1.1.13+）
-- `wiki_query` 多櫃子掃描 + not-found 診斷（v1.1.4+）
-
-### 生命週期管理
-- 崩潰重啟、掛起偵測（hang_detector）、成本控制（cost_guard）
-- 排程引擎（完整 cron 支援，含日/月/星期 v1.0.4+）
-- Topic 持久化（state/topics.json，重啟不遺失 v1.0.5+）
-- Preflight / degraded 模式（v1.1.3+）
-
-### 安全性
-- `reply_file` 路徑白名單（v1.0.4+）
-- `wiki_ingest` 路徑封閉檢查（v1.0.4+）
-- 硬編碼治理 3 波（v1.1.1~v1.1.3）：所有系統提詞和設定動態化
+> 💡 **未知欄位會發 warning 並給建議**（1.2.24+）。實測有個部署把 `skip_resume` 寫成
+> 不存在的 `resume_session`，**9 個 instance 全都寫錯、7 個行為與意圖相反、零訊號** ——
+> 因為未知欄位原本被靜默丟棄。建議排序用詞素交集而非字面相似度
+> （`difflib` 對 `resume_session` 的首選是 `max_user_sessions`，那是錯的）。
 
 ---
 
-## 設定速查（v1.1~v1.2 新增）
+## CLI
 
-### `team.yaml` → `communication`
-
-| 設定 | 預設 | 說明 |
-|------|------|------|
-| `peer_reply_timeout_minutes` | `15` | A 請 B 後 N 分無回覆 → 主動 nudge A 重試/改派（`0`=關）v1.1.13+ |
-| `dispatch_context_ttl_minutes` | `30` | 派工脈絡保留時間；使用者續問時注入「你上一步請 X 處理 Y」（`0`=關）v1.2.2+ |
-| `tool_detail` | `false` | ToolTracker 顯示模式：`false`=人性化單行、`true`=完整工具序列（維運排查）v1.1.9+ |
-| `p2p.*` | — | worker↔worker 直接通訊策略（`enabled` / `max_rounds` / `cc_leader` / `emergency_mode`）|
-
-### `team.yaml` → 頂層 / `instances.<name>`
-
-| 設定 | 層級 | 說明 |
-|------|------|------|
-| `knowledge_search_order` | 頂層 | 知識庫櫃子搜尋優先序，如 `[shared, hoyeah]`；未設＝字母序 v1.2.0+ |
-| `task_prefix` / `task_suffix` | instance | 送往此 agent 的訊息自動包夾（如「只輸出結論、≤3000 字」）；空＝no-op v1.2.0+ |
-| `group` | instance (worker) | 指向所屬 leader，輸出改發該 leader 的 topic v1.1.0+ |
-| `skip_resume` | instance | `true`=開新對話、`false`=`--resume` 接續；未設依 role（admin/manager 接續）v1.1.3+ |
-| `multi_user` | instance (admin) | per-user session 隔離（`max_user_sessions` / `session_idle_timeout_minutes`）|
-| `cost_guard.per_instance_limits` | 頂層 | 各 agent 獨立日預算，超限只暫停該 agent |
-
-### 模型分工（成本優化 pattern，零程式）
-
-借鏡「快模型路由／強模型幹活」的做法 —— 用既有的 per-instance `model` 設定即可，不需額外 LLM router：
-
-```yaml
-instances:
-  entry-agent:            # 入口／路由：判斷意圖、分流，工作輕
-    model: auto           # 或指定較快/較便宜的模型
-  architect-agent:        # 重推理：架構設計、可行性評估
-    model: claude-opus-4.6
-    model_failover: [claude-sonnet-4.6]   # 主模型不可用時降級
+```bash
+ark-team-agent init [--entry-name NAME]   # 產生鷹架
+ark-team-agent team start | stop | restart | status
+ark-team-agent ls                          # 活躍進程
+ark-team-agent sessions | attach <name>    # 對話 session
+ark-team-agent send <name> <msg>           # 直接發訊息給某個 agent
+ark-team-agent kiro status | sync | diff | refresh   # .kiro 產出檢查
+ark-team-agent api | webbot | scheduler    # 單獨啟動子系統
 ```
 
-入口 agent 每則訊息都會被喚醒，用快模型可明顯降低成本；重推理 worker 才用強模型。
+---
 
-### `scheduler.yaml` 內建 job
+## 運維
 
-| `target` | 說明 |
-|------|------|
-| `_builtin:spec-validator` | Code ↔ Spec 一致性驗證（drift report）|
-| `_builtin:output-ttl` | Output 超期提醒：依 BRAIN.md 分類 TTL 掃 `output/`，超期記 `degraded`（**只提醒不刪**）v1.2.7+ |
-| `_builtin:memory-consolidate` | 記憶治理：`memory/daily/*.md` >14 天搬 `archive/`、`memory.md` 超標記 `degraded`（純機械、無 LLM、非破壞性）v1.2.4+ |
+### 升級
 
-### 健康端點
+```bash
+pip install --force-reinstall --no-deps <wheel 或 Release URL>
+python -c "import ark_team_agent as m; print(m.__version__, m.__file__)"
+systemctl --user restart <service>
+curl -s localhost:13030/api/health          # 🔴 看版本號
+```
 
-`GET /api/health` → `instances: {running, alive, total}`（`alive`＝running + awaiting_reply，v1.2.0+）、`degraded[]`（降級/中斷事件，含 `deferred_message:*`、`restart_interrupted:*`、`memory_oversized:*`）。
+### 🔴 三條驗證鐵律（每條都是實測踩出來的）
+
+| # | 規則 | 為什麼 |
+|---|------|--------|
+| 1 | **重啟後看版本號，不是看 `systemctl is-active`** | 實測發生過 `active` 但跑的是舊碼（uptime 17 小時、版本停在上一版）。**版本號是唯一可靠的證據** |
+| 2 | **editable 與 wheel 不能混** | 先 `pip uninstall` 並確認 `import` 失敗，再裝 wheel。`.pth` 會把舊 `src/` 插在 `sys.path` 最前 → 「裝了 wheel 但讀的還是 src」**而驗證會通過** |
+| 3 | **`degraded` 空 ≠ 沒問題** | 它記的是「系統知道的異常」。有些缺陷不產生任何事件（例如訊息送達但內容被刪、agent 讀到過時的成員表） |
 
 ---
 
+## 測試與品質
+
+```
+1417 passed · 6 skipped
+```
+
+- 純 `pytest`（`asyncio_mode=auto`），無外部服務依賴
+- **掃描式守門測試** —— 例如「所有 `team.yaml` 不得有未知欄位」、「`scheduler` 不得寫死 instance 名」。
+  用 `ast` 排除 docstring 與註解（說明文件常示範「不該這樣寫」）
+- 測試分兩層：套件邏輯測試（隨套件走）vs 部署驗證測試（留在各部署）
+
+---
+
+## 設計原則
+
+這個套件修過的缺陷有**固定形狀**。這些原則就是從那些缺陷長出來的：
+
+**① 「宣告了但沒接上」是最常見的缺陷類型。**
+設定欄位存在、文件寫著、實作卻是空的或早被移除。比「沒有這個設定」更糟 ——
+讀設定的人會在錯誤假設上做決定。所以現在**未知欄位會警告、死設定會被測試擋下**。
+
+**② 假綠燈比壞掉更危險。**
+壞掉你會發現；掃不到東西卻回報 ✅ 的檢查，你會信它。
+所以守門腳本要驗**實際值**，不只驗寫法。
+
+**③ 靜默失效要當成缺陷本體，不是副作用。**
+不拋例外、不寫 log、只讓行為安靜地錯 —— 這類問題可以存在好幾個月。
+`degraded` 事件簿、未知欄位警告、MCP 預檢，都是為了把靜默的東西講出來。
+
+**④ agent 只讀最終 context，不知道設定檔存在。**
+「機制存在但 agent 不知道」等於沒有。所以該讓人設定的事，位置是**範本註解與專案文件**，
+不是 agent 的 always-on context —— 對它提示無法行動的事只是雜訊。
+
+**⑤ 部分結果比沒結果好，但要講明白。**
+逾時就用已完成的部分收斂，並在答覆裡說清楚誰沒回。不要讓人等到硬超時。
+
+---
 ## 部署案例
 
-| 專案 | 版本 | 說明 |
+| 專案 | 編制 | 說明 |
 |------|------|------|
-| [nana-team-agent](https://github.com/igs-paddyyang-tw/nana-team-agent) | editable（框架源） | 小娜 AI Team（10 agents）|
-| [paddy-team-agent](https://github.com/igs-paddyyang-tw/paddy-team-agent) | v1.0.1 | Paddy 個人 AI 團隊（5 agents）|
-| [fish-team-agent](https://github.com/igs-paddyyang/fish_team_agent) | v1.0.5 | 捕魚遊戲團隊（10 agents）|
+| [paddy-team-agent](https://github.com/igs-paddyyang-tw/paddy-team-agent) | 5 agents | **本套件的開發源**（editable）+ Paddy 個人 AI 團隊 |
+| [nana-team-agent](https://github.com/igs-paddyyang-tw/nana-team-agent) | 11 agents | 小娜 AI Team（扁平 topic 架構，每 agent 一個 Topic）|
+| aiops-team-agent | 9 agents | 維運團隊（事故指揮 / SLO / 觀測 / 資安 / 自動化 / MLOps）|
+| director-team-agent | 7 agents | 情報蒸餾團隊（產品 / 市場 / 技術 / 知識管家）|
+| slot-team-agent | 13 agents | 老虎機 QA 諮詢（**三層 group 架構**：總機 → 3 組 leader → 組內職人）|
+| fish-team-agent | 14 agents | 捕魚機團隊（slot 的前身）|
+
+> **三種架構模型都在生產跑**：扁平 topic（nana）、純私訊無群組（paddy）、三層 group（slot / fish）。
+> 差異只在 `team.yaml` —— 套件本身不假設你的組織形狀。
 
 ---
 
