@@ -6,6 +6,39 @@
 
 ---
 
+## [1.4.2] — 2026-08-18
+
+### 私訊問 → 回私訊（`reply_to_origin` 現在涵蓋兩種場景）
+
+1.4.0/1.4.1 只處理了**群組 topic**。私訊那條路徑原本是：
+
+```python
+if has_mention and target != bound_instance:
+    _reply_channel[send_target] = "topic"      # ← 你在私訊問，答案跑到群組 topic
+```
+
+**同一類體驗問題，只是場景不同**：回覆去「agent 的家」而不是「你問的地方」。
+使用者在私訊 `@喬巴 …`，答案出現在群組的 Topic #7。
+
+**修法**：`_origin_topic` 的值從 `int`（只有 topic id）改成
+**`(kind, dest)`** —— `("topic", topic_id)` 或 `("private", chat_id)`。
+
+> 💡 **為什麼不開第二個 dict 記私訊** —— 「回到你問的地方」是**一個**概念，
+> 兩個平行的 dict 必然漂移（本套件修過太多次兩份實作不一致）。
+> 值多一個 kind 欄位，兩處寫入、一處讀取，判斷點仍然只有一個。
+
+⚠️ **私訊的目的地記的是 `msg.chat_id`（使用者那個視窗），不是 agent 自己設定的
+`private_chat`** —— 被派工的 worker 通常**沒有**那個設定，靠它會查不到而退回 topic，
+等於問題沒解。派工鏈的傳遞與群組情境完全相同。
+
+未啟用 `reply_to_origin` 時，私訊的三分支判斷原封保留（`@mention` 別人 → topic）。
+
+### 測試
+
+`tests/test_origin_routing.py` 16 → **22 個**（私訊回原視窗、私訊派工鏈傳遞、
+必須用記下的 chat_id 而非 agent 設定、未啟用時保留舊分支、值必須是 pair）。
+全量 **1534 passed**。
+
 ## [1.4.1] — 2026-08-18
 
 ### 🔴 訂正 1.4.0：origin 回覆路由改為 opt-in（預設關）
