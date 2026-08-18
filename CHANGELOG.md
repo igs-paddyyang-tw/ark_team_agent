@@ -6,6 +6,85 @@
 
 ---
 
+## [1.4.6] — 2026-08-18
+
+**起點是一句「行為正確」的回報。** slot 的 data-engineer 說：
+「無法 `send_to_instance` 給 admin-agent（worker 不能直接發給 admin）。
+已改發給 analyst-agent（我的 leader）請求協調。」
+
+**它做對了** —— 那是設計上的指揮鏈限制。但這句話讓我去查
+「worker 到底有沒有辦法讓私訊的那個人知道」，於是找到三個缺陷。
+
+### 🔴 1.2.26 修的那個缺陷家族，有一個兄弟倖存了
+
+`log_to_leader` 的 private fallback：
+
+```python
+_fallback_cid = (
+    self._private_chat_map.get(leader_name)
+    or self._private_chat_map.get("admin-agent")     # ← 寫死
+    or next(iter(self._private_chat_map.values()), None)
+)
+```
+
+實測各部署的私訊入口：
+
+| 部署 | 入口 instance | 寫死的 `admin-agent` 查得到？ |
+|------|--------------|---------------------------|
+| aiops / paddy / slot / fish | `admin-agent` | ✅ 碰巧命中 |
+| **nana** | `ark-agent` | ❌ **落空** |
+| **director** | `tech-agent` | ❌ **落空** |
+
+**它沒有炸掉，只是因為第三層「任一 `private_chat`」在單人部署下剛好是同一個人**
+—— 多個 `private_chat` 時就會挑到錯的人。
+
+1.2.26 就是為這件事加了 `owner_chat_id()`（依 role 推導），**只是這處沒改到**。
+
+**而 CI 沒抓到，是因為 `BANNED` 只加了 `ark-agent`、沒加 `admin-agent`。**
+
+> 🔴 **CI 名單的漏項不會表現為誤報，會表現為「那一類問題永遠不被發現」** ——
+> 這是 1.2.26 寫下的教訓，這次由同一個家族的兄弟再次證明。
+> 本版把 `admin-agent` 補進 `BANNED`（**加之前先量過噪音**：程式碼行只命中 2 處 ——
+> 1 個真缺陷、1 個範本舉例字串）。
+
+### worker → admin 的 403 現在會告訴 agent 該怎麼做
+
+原本只回 `"{source} (worker) can only send to leader or worker"` —— 只說不准、不給路。
+而 1.1.9 就定下過原則（P2P 停用時的 403 附替代路徑，**避免 agent 自行發明繞道**），
+worker→admin 這條沒跟上。
+
+現在：
+
+```
+{source}（worker）不能直接發給 admin —— 請改用 send_to_instance 發給
+{實際的 leader 名}（你的 leader）由其轉呈，或用 log_to_leader 私下回報。
+```
+
+**帶的是那個 agent 實際的 leader 名**（`_leader_for(source)`），不是泛稱。
+
+### 順手刪一段死碼
+
+那行 403 `raise` **重複了兩次**，第二行永遠不會執行。無害，
+但它是「這段被複製貼上過」的訊號 —— **而複製貼上正是兩份實作漂移的起點**。
+
+### ℹ️ 設計本身不改：worker 仍然不能直接發給 admin
+
+這是刻意的指揮鏈。worker 有三條路讓人知道：
+
+| 管道 | 到哪 |
+|------|------|
+| `log_to_leader()` | leader 的 topic；topic 不可用時 fallback 到 **owner 的私訊**（本版修好的就是這條） |
+| `send_to_instance(leader)` | 由 leader 轉呈 |
+| `reply()` | 使用者發問處（`reply_to_origin` 開啟時）或自己的 topic |
+
+**系統層的緊急通報不受此限** —— `notify_paddy()` 與 L3 拍板卡自 1.2.26 起
+依 role 推導 owner，直接進私訊。
+
+### 測試
+
+新增 `tests/test_worker_escalation.py` **6 個**，含用 `ast` 掃「`raise` 之後的死碼」
+與「api.py 程式碼行不得出現任何寫死的入口 agent 名」。全量 **1599 passed**。
+
 ## [1.4.5] — 2026-08-18
 
 ### 新增 qa 專屬 SOUL/BRAIN 範本
