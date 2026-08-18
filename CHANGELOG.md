@@ -6,6 +6,70 @@
 
 ---
 
+## [1.3.2] — 2026-08-18
+
+### 🔴 `style="report"` 是 raw passthrough —— 回覆裡的 `<260>` 讓整則訊息被 TG 拒收
+
+**回報來源**：slot-team-agent 的 `researcher-agent` 回覆含「樣本數 `<260>` 筆」，
+Telegram 用 `parse_mode=HTML` 解析時把 `<260>` 當成未知標籤 → 400 Bad Request。
+
+`_format_reply_html()` 在 `style="report"` 時原本就是 `return text` ——
+**完全不跳脫**。而那個 raw passthrough 是刻意的：2026-08-10 為了讓 agent 能自己寫
+`<b>`（escape-first 會把它變成 `&lt;b&gt;`），把排程 job 全部改成 `style="report"`
+繞過 escape。**於是繞掉的不只是 `<b>`，是所有 `<`。**
+
+> 🔴 **下游 fallback 讓它更難發現**：400 之後 `_rate_limited_send` 會用
+> `_strip_html()` 重送純文字，而那是 `re.sub(r"<[^>]+>", "")` ——
+> **`<260>` 被整段刪掉**。訊息送達了、沒有錯誤畫面，只是**報告裡的數值無聲消失**。
+> 「降級成功」把一個資料正確性問題偽裝成了格式問題。
+
+**修法不是回頭 escape 全部**（那會復發 2026-08-10 的問題），是**白名單**
+`_sanitize_tg_html()`：TG 支援的 16 個標籤留、其他 `<` `>` 與裸 `&` 跳脫。
+
+三個實作要點：
+
+1. **只驗標籤名不夠，要驗屬性** —— `if x <b then y> 0` 的 `b` 是合法標籤名，
+   於是整句 `<b then y>` 會被當標籤吃掉。現在每個標籤有允許的屬性樣式
+   （`a href` / `code class` / `span class` / `blockquote expandable` / `tg-emoji emoji-id`），
+   不符者當文字。
+2. **順帶保證結構平衡**（TG 對不平衡標籤同樣 400）：跳脫掉某個開標籤時，
+   它的 closer 也一併跳脫（否則變成落單的 `</a>`）；無主 closer 跳脫；
+   收尾補關未關閉的標籤。輸出永遠是合法嵌套。
+3. **既有 entity 不重複跳脫** —— `A&amp;B` 不能變成 `A&amp;amp;B`，
+   但裸的 `A&B` 要變 `A&amp;B`。先把合法 entity 挖洞保護再跳脫。
+
+`style="chat"` 路徑**完全未動**（它本來就是 escape-first，安全）。
+report 模式「無 header、agent 自控格式」的語意也不變。
+
+守門測試 `tests/test_tg_html_sanitize.py` **38 個**。全量 **1417 passed**。
+
+### `team_doc` 的範本註解（純註解，零 runtime 影響）
+
+`templates/team.yaml` 與 `examples/team.yaml` 的 `team_doc` 說明改寫 ——
+原本只寫「未設則省略該段」，讀者不會意識到那代表什麼。
+
+實測動機：2026-08-17 稽核六個部署，**只有一個設了 `team_doc`**。
+其餘五個團隊的 agent 從來沒見過指揮鏈或協作流程，而且：
+
+> **agent 讀不到 `team.yaml`，只讀 `TEAM.md` 的最終內容** —— 它不知道
+> `team_doc` 這個設定存在，所以「缺了指揮鏈」既不會被它察覺、也無法自己補。
+
+新註解明講這件事、建議直接設定（不要留註解狀態）、並說明 1.3.1 的實際編制註記
+與幽靈／隱形角色 warning。**這類「機制存在但要人來開」的事，正確位置是範本註解
+與專案文件，不是 agent 的 always-on context** —— 對 agent 提示它無法行動的事只是雜訊。
+
+✅ 註解隨本版（1.3.2）發佈 —— 新部署 `init` 起就帶得到。
+
+### `examples/` 隨套件搬入本 repo
+
+`examples/`（10 檔）原本留在 `nana-team-agent` —— 它記述的是**套件的**設定格式，
+而套件已於 2026-08-17 搬到這裡。留在 nana 會變成第二個真相來源
+（實測 2026-08-17 就已經需要人工同步過一次兩份範本的差異）。
+
+`templates/team.yaml`（`init` 用的最小範本）與 `examples/team.yaml`
+（含 manager/leader/worker 的 worked example）是**兩份不同用途的檔案**，
+不是重複 —— 逐行比對確認 167 行相異，兩份都保留。
+
 ## [1.3.1] — 2026-08-17
 
 > **同一個缺陷家族的第五批**：宣告了、寫死了、或根本沒接上，而且**沒有任何錯誤訊息**。
