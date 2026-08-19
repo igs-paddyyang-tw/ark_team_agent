@@ -6,6 +6,83 @@
 
 ---
 
+## [1.4.7] — 2026-08-19
+
+三個缺陷，**共同點是「每個指標都說沒問題，而它是壞的」**。全部從實機日誌查出來。
+
+### 🔴 ① hang 偵測看錯欄位 —— agent 9 小時零輸出而帳面全綠
+
+實測（aiops）：obs-agent 每小時發巡檢給 ic-agent，ic-agent 從 22:30 起
+**再也沒有任何輸出**。而同一時間：
+
+```
+status=running · crash_count=0 · halted=False · 進程活 15 小時
+last_activity=08:30（每小時被 obs 的訊息刷新）
+```
+
+**每一個指標都說它很好，hang 偵測（門檻 60 分）從未觸發。**
+
+**真因**：`last_activity` 同時被 **inbound（訊息寫進 stdin）** 與
+**output（產出增加）** 更新 —— 它混了「我收到東西」與「我做了事」兩種語意。
+而 hang 要問的是後者。每小時一次 inbound 就把它刷新到 60 分鐘內。
+
+> 🔴 這是 **1.2.16（`IDLE` vs `AWAITING_REPLY`）同一個形狀**：
+> 一個欄位承載兩種語意，於是需要區分它們的那個判斷必然失效。
+
+**修法**：分出 `last_output`（**只**由「產出增加」更新），hang 偵測改看它；
+沒有任何產出時（剛啟動）退回 `last_activity`，避免剛起來就被誤判。
+`last_activity` 語意不變 —— idle eviction 要它（剛收到工作的 agent 不該被回收）。
+`/api/status` 一併暴露 `last_output`，否則「9 小時沒輸出」還是查不出來。
+
+守門用 `ast` 檢查**每個** `last_output` 賦值都位於「output_count 增加」分支內
+—— 否則就悄悄退回混用語意。
+
+### ② TG adapter 晚 10 秒 link —— 那個窗口內的回覆被丟掉
+
+```
+01:25:02  Telegram bot connected
+01:25:03  WARNING 💬 REPLY leader-agent: no telegram adapter and no web session  ← 掉了
+01:25:12  Daemon API: Telegram adapter linked
+```
+
+`daemon_api.tg = tg_adapter` 排在整段啟動流程**最後**，而中間有一個**刻意的**
+`await asyncio.sleep(10)`（等重啟中的 agent 安定才發啟動訊息）。
+那 10 秒內 agent 已經在跑、可以回覆，但 `DaemonAPI.tg` 還是 `None`。
+而 `/api/reply` 的重試**只等 3 秒** → **必然失敗**。
+
+**修法**：TG 一連上就立刻 link。那個 sleep 是為了「發啟動訊息的時機」，
+與「adapter 可不可用」無關 —— 沒有理由在這段時間扣住這個參照。
+尾端保留冪等指派（涵蓋「TG 啟動拋例外」的分支），兩處 log 用不同字樣以便分辨。
+
+### 🔴 ③ `POST /api/v1/dispatch` 從加進來就沒有一次成功過
+
+查上面兩項時全量測試有紅燈，先確認**不是自己造成的**
+（`git archive HEAD` 匯出到暫存目錄隔離跑，**不動工作樹**），
+確認在 HEAD 就是紅的，追到引入它的 commit。
+
+```python
+async def dispatch_message(request: Request)   # ← Request 沒有 import
+```
+
+本檔有 `from __future__ import annotations`，所以註解是**字串**、不會在定義時求值：
+
+- **沒有 NameError、沒有 ImportError**
+- FastAPI 解析不出型別 → 把它當成**名為 `request` 的 query 參數**
+- 實測：`POST /api/v1/dispatch` → **HTTP 422**
+  `{"loc":["query","request"],"msg":"Field required"}`
+- `app.openapi()` 也炸（`ForwardRef('Request')` 無法建 TypeAdapter）
+
+**所以不只 openapi 測試紅 —— 整條 dispatch API 每一次呼叫都是 422。**
+補上 import 後實測：openapi ✅、路由回 200。
+
+> 💡 **`from __future__ import annotations` 會讓「漏 import」變成靜默失效** ——
+> 這個套件反覆修過的家族又一個新形狀。
+> 型別註解不再於定義時求值，所以**漏 import 的代價從「立刻炸」變成「行為安靜地錯」**。
+
+### 測試
+
+新增 `tests/test_hang_and_adapter_link.py` **9 個**。全量 **1652 passed**。
+
 ## [1.4.6] — 2026-08-18
 
 **起點是一句「行為正確」的回報。** slot 的 data-engineer 說：
