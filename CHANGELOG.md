@@ -6,6 +6,19 @@
 
 ---
 
+## [1.5.0] — 2026-08-21
+
+### Added
+- **hang_detector v2** — 喚醒失敗 15min 即重啟（wake_retry_minutes）、啟動零 output 10min 偵測（startup_timeout）、context 累積 500K 字元自動 reset
+- **維運日報三軌** — scripts/daily_report.py（MD→HTML→TG）+ 套件範本 templates/reports/
+- **啟動顯示版號** — log + TG 啟動訊息含「📦 ark-team-agent v{version}」
+- **M4 TG menu 整合** — /agents 面板 team 模式顯示 team agents 按鈕 + @mention 走 dispatch
+- **crash 診斷改進** — event log 同時記錄 output head + tail（rc=1 的錯誤訊息在開頭）
+- **InstanceState.cumulative_output_chars** — 追蹤 context 累積量
+
+### Changed
+- hang_detector: wake_retry_minutes=15、startup_timeout_minutes=10、context_limit_chars=500000
+
 ## [1.4.11] — 2026-08-20
 
 ### Fixed
