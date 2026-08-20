@@ -6,6 +6,25 @@
 
 ---
 
+## [1.4.11] — 2026-08-20
+
+### Fixed
+- **reply 失敗回退狀態** — no output channel / 404 時自動 AWAITING_REPLY → RUNNING（防永久卡住）
+- **private_chat channel 永久綁定** — 從 config 初始化，context compact 後不遺失 reply channel
+
+## [1.4.10] — 2026-08-20
+
+### Added
+- **訊息 TTL 自動過期** — send_message 支援 ttl_minutes（預設 15 分鐘），過期自動丟棄
+- **Cancel 主動取消** — POST /api/cancel 可取消待投遞訊息
+- **auto_restart** — hang_detector escalation 後自動重啟卡住的 agent
+- **headless 模式** — team.yaml `mode: headless` 或 --headless flag（不啟動 TG）
+- **/api/v1/dispatch** — 外部整合用派工端點（bot+team 整合）
+- **/api/v1/agents** — 列出可用 agents
+
+### Changed
+- hang_detector 門檻收緊：timeout 60→30 分鐘、escalation 180→90 分鐘
+
 ## [1.4.7] — 2026-08-19
 
 三個缺陷，**共同點是「每個指標都說沒問題，而它是壞的」**。全部從實機日誌查出來。

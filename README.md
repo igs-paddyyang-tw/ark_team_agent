@@ -5,7 +5,7 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.4.7-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Version](https://img.shields.io/badge/version-1.4.11-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
 [![Tests](https://img.shields.io/badge/tests-1417%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
