@@ -6,6 +6,40 @@
 
 ---
 
+## [1.5.1] — 2026-08-21
+
+### 🔴 建構子字串預設值也依賴 cwd —— 掃描器抓不到的第二種形狀
+
+```python
+DB_PATH = Path("state/decisions.db")        # ← 1.4.9 抓到並修掉
+db_path: str = "state/message_queue.db"     # ← 抓不到
+```
+
+守門腳本 `check_package_paths` 的 `_RE_REL_PATH` 只匹配 `Path("...")`。
+而字串預設值一樣是 cwd 相對、一樣不拋例外、一樣在別的目錄啟動時寫到別處。
+
+**同型錯誤已出現三次**（`decision_manager.DB_PATH` ✅ 抓到、
+`MemorySearch("data/sessions.db")` ❌ 溜過去、本次兩處 ❌ 溜過去）
+→ 補掃描規則，不再人工盤點。
+
+### 修正
+
+| 位置 | 改法 |
+|---|---|
+| `conversation_log.py` | `db_path` 預設 `"state/conversations.db"` → `None`，走 `get_state_dir()` |
+| `message_store.py` | `db_path` 預設 `"state/message_queue.db"` → 同上 |
+
+🔴 **`MessageStore` 特別嚴重** —— 訊息佇列是**寫入目標**。
+寫到別的目錄不是「找不到資料」，是**訊息消失**，
+而 daemon 把訊息丟進佇列後就回傳成功了。
+
+明確傳入的路徑仍優先（測試與消費端的逃生門）。
+
+### 相容性
+
+**純內部路徑修正，無行為改變。** 從專案根啟動的部署（全部六個）
+解析結果與 1.5.0 完全相同。
+
 ## [1.5.0] — 2026-08-21
 
 ### Added
