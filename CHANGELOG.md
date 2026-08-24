@@ -6,6 +6,163 @@
 
 ---
 
+## [1.5.3] — 2026-08-24 · ✅ Release
+
+一族「硬編別的部署人名」的缺陷，以及**為什麼守門三次都沒抓到**。
+
+> ⚠️ 本段原本誤寫進 1.5.2 —— 那一版 **2026-08-22 就已發布**（asset 在
+> `igs-paddyyang-tw/ark_team_agent` 的 `v1.5.2`）。開發源 repo 的 tag 是
+> `team-v1.5.0`，發版 repo 的是 `v1.5.2`，**兩套 tag 系統**，只看本機
+> `git tag` 會得出「1.5.2 未發布」的錯誤結論。已發布的版本不能改寫內容
+> —— 實測兩顆 wheel 大小就不同（596455 vs 598097）。
+
+### 工具說明裡的幽靈收件人：`pm-agent` / 綱手
+
+上一節把工具**表**合一了，漂移卻轉移到沒人當成規格的地方 —— **說明文字**。
+`log_to_leader` 的 description 寫著「私下發給綱手（pm-agent）」，而：
+
+| 寫的 | 實際 |
+|---|---|
+| 收件人是 `pm-agent` | 多數團隊沒有這個 instance（本團隊是 paddy / admin / leader / …） |
+| 固定某個人 | `POST /api/log` → `_leader_for(source)`，依 group **動態解析** |
+
+它是 ninja fork 遺產。而 1.5.2 起 TEAM.md 的工具表說明**直接取自這些
+description** → 每個 agent 的 always-on steering 天天寫著一個不存在的收件人。
+
+同源的還有 TG「執行計劃」按鈕的提詞第 3 條「無任務 → 向 pm-agent 請求派工」——
+agent 照做就是 `send_to_instance` 給不存在的對象。兩處都改成描述角色
+（「你的 leader，由系統依團隊編制解析」），不寫死人名；另修兩處已與實作不符的
+過時註解（該處程式碼本來就是動態找 `role == "leader"`）。
+
+> 🔴 **與 TEAM.md 幽靈成員 `cto-agent` 同型**：成員表已經動態化了，
+> 漂移轉移到「說明文字」。**最容易漂移的恰好是最像文件的那一塊。**
+
+### 代號有兩份實作，其中一份是手寫的火影名單
+
+`TelegramAdapter._build_codenames` 從 `description` 動態解析代號（正確），
+而 `scripts/task_screenshot.py` 另有**一份手寫的 13 人火影代號表**
+（`pm-agent: 🔱綱手` …）。對任何非 ninja 團隊，那張表每一列都不會命中
+→ 永遠 fallback 到 raw instance 名。**不會壞、不報錯，只是那個美化功能
+等於不存在**，而看起來像有在運作。
+
+實作抽成 `config.build_codenames()`（單一權威來源），兩邊都走它。
+放 `config.py` 而不是 `telegram.py`：截圖腳本不該為了取代號去 import
+整個 telegram 適配器（連帶拉 python-telegram-bot 依賴）。
+
+### 兩個「範本產出即壞掉」
+
+- **`init` 產出的 `scheduler.yaml` 兩個 job 都 `target: pm-agent`** ——
+  任何新專案都沒有那個 instance，兩個排程**從第一天起就對不存在的對象派工**，
+  而 `init` 回報成功。改用 `--entry-name` 的 `entry` 變數。
+- **`chat_api.ChatSendRequest.instance` 預設 `pm-agent`** —— 呼叫端不給就
+  靜默送進虛空（`ok: False`，看不出原因）。改為**必填**。
+  原本有個測試 `test_chat_send_default_instance` 正在**固定這個缺陷**，
+  讓它看起來是刻意行為；已改為驗 422。
+
+> 💡 **填錯的預設比沒有預設更糟** —— 422 至少會當場說「你少給了 instance」。
+
+### 守門：掃描範圍與名單都補了（這批漏網的原因）
+
+`scripts/check_hardcoded_names.py` 三個缺口：
+
+| 缺口 | 後果 |
+|---|---|
+| **只掃 `src/ark_team_agent`** | `src/` 底下有**兩個**套件，`ark_bot_agent` 從沒被掃過 |
+| BANNED 只有「火影」一個詞 | `pm-agent` 與整組角色名（綱手/鳴人/佐助…）一路倖存 |
+| docstring 判定用「數三引號」 | 單行 docstring（引號數偶數）判不出 → 實測 3 處假警報 |
+
+補掃第二個套件、補齊 ninja 名單與各部署入口代號、docstring 改用 `ast`
+判定並額外剝除行尾註解。補上後一次噴出 **13 處**（3 假 10 真），
+全部處理完歸零。
+
+> 🔴 **假警報要一起修** —— 常駐假警報的代價不是雜訊，是維運開始
+> 習慣性忽略該檢查，等於把它廢掉。
+
+### 範例與文件
+
+- **`examples/team.yaml`**：instances 改中性名（原本用 `pm-agent` +
+  寫死 `~/game-team-agent/...` 絕對路徑）、`team_doc` 從「整段註解掉」
+  改為**預設啟用**（不設正是實測會出事的狀態，範例把它當起點等於教人踩坑）、
+  補 `display_name` 與 `kiro_files.steering.team_md: always`、
+  修正 `description` 格式示範（代號靠全形 `—` 分隔）。
+  另訂正標題 —— 原文說「manager / leader / worker 三種 role」而
+  instances 裡**沒有任何 manager**，照標題寫指揮鏈會觸發幽靈角色 warning。
+- **`team.yaml` 的 `team_doc.command_chain`**：入口寫成 admin（實際是
+  manager）、把 admin 叫「管家」（它是「維運管家」）。那行會寫進
+  **全部 6 份 always-on TEAM.md**。順帶：一致性檢查是純子字串比對 role 名，
+  四個 role 都要出現，否則每個 agent 各噴一次「隱形」warning（修前正在噴）。
+
+### 守門
+
+
+新增「工具 description 不得寫死非本團隊 instance 名」四角色 × 兩層
+（description 本身 + 產出的 TEAM.md 工具表）。**只掃 description 值不掃原始碼**
+—— 說明性註解要能講這段歷史，掃字面值會被自己的註解誤報（本檔記載過的假警報型態）。
+
+本版新增守門共 **14 個**（另有 7 個在 `ark_bot_agent` 側）：
+掃描器涵蓋兩套件且不誤報單行 docstring／行尾註解、兩份設定的 role 與代號一致、
+`command_chain` 涵蓋每個實際存在的 role。**每條都做過反證** ——
+把設定改回修前的值確認會紅，不是空跑。全量 **1892 passed**。
+
+## [1.5.2] — 2026-08-22
+
+團隊認知動態化收尾（工具表合一 + 執行期補欄位）+ 兩個修正。
+**依版號規則歸 Patch**：bug 修復 + 既有 API 補欄位（那些欄位別的端點早有）+
+行為保持的 refactor，無新公開 API、無 breaking。
+
+> ⚠️ 本段合併自先前工作區疊的 1.6.0 + 1.7.0 兩個未發布 minor —— 那兩級跳號
+> 與內容不符（1.5.0 是最後發布版，兩者都沒發過）。依「版號要對應真實事實變化、
+> 實務走 Patch」收斂為單一 1.5.2。
+
+### TEAM.md 工具表：兩套來源合一（原 1.6.0）
+
+`backend.write_team_context` 的「MCP 工具」表原本是**手寫 markdown**，
+與 `team_mcp._get_tools()` 的實際過濾邏輯是**兩套獨立來源** —— 這正是本套件
+反覆記載的「宣告了但沒接上」病根形狀。實測它們已經漂移：
+
+| 手寫表寫的 | 實際 `_get_tools()` |
+|---|---|
+| 漏了 `smart_delegate` / `reply_task_image` / `reply_file` / `decision_*` | 有 |
+| `wiki_ingest` 標成「只有 leader/admin」 | worker 也拿得到 |
+
+改法：抽出純函式 `tools_for_role(role)` 當**單一權威來源**，MCP server 的
+`tools/list` 與 TEAM.md 工具表都走它；表格的說明文字直接取自工具 schema 的
+description（不再手寫）。worker 白名單抽成 `WORKER_TOOL_NAMES` 常數。
+
+> 💡 成員/指揮鏈/角色分佈早已動態化，唯獨工具表是手寫的 —— **最容易漂移的
+> 恰好是最像「文件」的那一塊**，因為它看起來只是說明，沒人想到它其實是規格。
+
+### 新增 `get_task`：補上多輪協作的斷點（原 1.6.0）
+
+`list_tasks` 只給標題，接手任務或驗收的 agent 看不到 `summary` /
+`changed_files` / `verification` / `residual_risk` —— 交接細節就在 `TaskBoard`
+裡（`get_task` 方法早就有），只是從沒暴露成 MCP 工具。多輪協作在這裡斷掉。
+新增 `get_task(task_id)` 工具，吐出完整 handoff（進度紀錄取最近 5 筆）。worker 也拿得到。
+
+### `/api/status` 補上 role / description / display_name（原 1.7.0）
+
+啟動時寫進 `TEAM.md` 的成員表是靜態快照。執行期 agent 走
+`query_team_status` → `GET /api/status`，而 `daemon.get_status()` 每列
+**只有 runtime 狀態**（status / idle / last_output），沒有 role/description ——
+那些欄位只存在於另一條路徑 `get_instances_detail()`（`/api/instances`）。
+結果 agent 查得到「誰在忙」，**查不到「誰負責什麼」**。
+改法：把三個欄位放進**唯一狀態出口** `get_status()`，不另組平行來源。
+`query_team_status` 輸出同步加「成員與職責」段（舊 daemon 帶不出時自動省略）。
+
+### 修掉 legacy-question-convert 誤觸已回覆的 agent（原 1.7.0）
+
+`daemon` Rule 1（把舊習慣 agent 掉在 Topic 的問句轉成 decision-request）
+會對**已經成功回覆**的 agent 誤觸 —— reply() 後 `AWAITING_REPLY` 是正常態，
+但只要內部推理輸出有個 `?` 就觸發一次假轉換，且失敗後不解鎖（agent 卡死）。
+改法：用 `state.last_output`（只由真的產出更新）判斷；輸出比 `remind_secs * 1.5`
+更新代表剛回覆過，那個 `?` 是內部獨白，跳過。同時修正一處標成 `[1.5.2]`
+（本版之前不存在該號）的漂移註解。
+
+### 守門
+
+`tests/test_dynamic_team_tools.py`：固定「TEAM.md 工具表 = `tools_for_role`」
+不變量、`get_task` 存在且 worker 可用且吐得出 handoff。全量 1859 passed。
+
 ## [1.5.1] — 2026-08-21
 
 ### 🔴 建構子字串預設值也依賴 cwd —— 掃描器抓不到的第二種形狀
