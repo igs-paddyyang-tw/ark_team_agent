@@ -6,6 +6,153 @@
 
 ---
 
+## [1.6.0] — 2026-08-24 · ✅ Release
+
+啟動時檢查有沒有新版，有的話在 TG 給一張帶按鈕的卡片一鍵更新。
+
+**這是新功能 → minor**（前面 1.5.x 全是 bug 修復與行為保持的 refactor）。
+
+### 為什麼需要：pin 說明不了實況
+
+實測本機九個部署的 `pyproject.toml` pin 對照實際跑的版本：
+
+| 部署 | pin | 實跑 |
+|---|---|---|
+| game-team-agent | 1.1.13 | **1.5.2** |
+| fish | 1.2.19 | — |
+| slotverse | 1.2.21 | — |
+| slot | 1.4.8 | — |
+| paddy | 1.2.21 | **1.6.0** |
+
+**pin 是下限，說明不了實況**，而實際版本只有去打 `/api/health` 才知道。
+於是「我這台是不是舊的」沒有人答得出來 —— 直到出事才發現少了某個版本
+才有的保護（1.5.1 的 wake-retry 與 context-reset，1.4.x 完全沒有）。
+
+### 版本檢查（`version_check.py`）
+
+啟動時查 Release API，結果進 log 與啟動橫幅：
+
+```
+📦 ark-team-agent v1.5.6 ⚠️ 有新版 v1.6.0
+📦 ark-team-agent v1.6.0（已是最新）
+📦 ark-team-agent v1.6.0                    ← 查不到時只顯示目前版本
+```
+
+三個設計約束，每一條都有測試釘住：
+
+| 約束 | 為什麼 |
+|---|---|
+| **絕不阻塞啟動** | 網路慢、DNS 壞、repo 打不通都不該讓服務起不來。3 秒逾時 + 吞掉所有例外 |
+| **絕不每次啟動都打 API** | 服務會頻繁重啟（改設定、hang 重啟、context-reset），版本不會。結果快取一天 |
+| **沒 token 就安靜跳過** | 發版 repo 是 private，`GITHUB_TOKEN` 沒設不是錯誤，是這台沒有查詢權限 |
+
+有新版時用 **WARNING**（維運通常只看 WARNING+），其餘走 INFO 不製造噪音。
+`ARK_VERSION_CHECK=0` 可完全關閉 —— **關掉時不發出任何網路請求**
+（不是只把結果藏起來；有些部署沒有對外出口，逾時 3 秒乘上重啟次數是實際成本）。
+
+> 🔴 **查不到 ≠ 過期。** `latest` 是 `None` 時 `outdated` 回 `False` ——
+> 否則網路不通的部署會每次重啟都跳一次假通知。
+
+### 一鍵更新（`updater.py` + TG 卡片）
+
+有新版 → 私訊管理者一張卡片 → 按鈕確認 → 下載、驗證、安裝、重啟。
+**只送私訊不送群組**（升級是維運決策，不是團隊公告）。
+
+這是**線上不可逆變更**，所以每一步都能擋下來：
+
+| 防線 | 擋什麼 |
+|---|---|
+| **開發源偵測** | 見下 —— 最重要的一道 |
+| 授權 | 只有 `access.allowed_users` 能按，且**權限檢查排在執行之前**（有測試驗順序） |
+| 版號比對 | 下載回來的 wheel 內 `__version__` 必須等於預期 —— **驗內容不驗檔名** |
+| zip 完整性 | 截斷的下載、下載到 HTML 錯誤頁 |
+| 安裝結果 | `pip` 回非 0 就**不重啟**，舊版還在跑 |
+
+> 💡 **安裝與重啟拆成兩步是關鍵設計。** 合在一起的話，
+> 一次失敗的安裝會連帶把服務重啟成裝不起來的狀態。
+
+其他細節都是踩過的：用 `sys.executable -m pip`（PATH 上的 `pip` 可能指向
+系統 Python，會裝到錯的地方**而且看起來成功**）、下載帶
+`Accept: application/octet-stream`（少了它拿到 JSON metadata）、
+**存檔用原始檔名**（`uv`／`pip` 依檔名解析版本）。
+
+### 🔴 開發源偵測：兩個判準，第二個是實測補上的
+
+從源碼樹跑的部署**絕不能裝 wheel** —— site-packages 的實體副本會贏過
+`.pth` 加的路徑，於是 `src/` 的修改再也不生效，而**沒有任何錯誤訊息**：
+服務照跑，只是跑的是被凍住的舊碼。
+
+| 判準 | 抓什麼 |
+|---|---|
+| ① PEP 610 `direct_url.json` → `dir_info.editable` | 標準的 `pip install -e .` |
+| ② **實際載入位置不在 site-packages 內** | 純路徑 `.pth` 的開發源 |
+
+**判準②是實測逼出來的**：本專案的 `ark_team_agent` 靠一個純路徑 `.pth`
+把 `src/` 加進 `sys.path`，`direct_url.json` **沒有 editable 標記** ——
+只有判準① 的話會回 `False`，而它確確實實是開發源。
+**漏掉這條，一鍵更新會毀掉開發環境。**
+
+> 💡 判準②直接看「實際載入的是哪個檔案」，比任何 metadata 可靠 ——
+> metadata 描述的是安裝當下，而我們要問的是**現在跑的是誰**。
+
+開發源上仍會收到通知（知道有新版有價值），但**不給按鈕**：
+按了也會被擋，不如不給。
+
+### 群組第一次說話會跳「想交給哪個 Agent？」選單
+
+追下去是 `ConversationPlanner.plan()` 的第 7 條（前六條都沒命中就 clarify）。
+而**沒命中第 4 條才是根因**：`session.instance` 來自 `_resolve_instance(topic_id)`，
+查不到 topic 就 fallback 到 `_general_instance` —— **沒有任何 instance 帶
+`general_topic: true` 時它是 `None`**，於是每一句話都掉到第 7 條。
+
+四處一起修：
+
+| | 修前 | 修後 |
+|---|---|---|
+| 按鈕 emoji | 硬編 `'🏗️' if 'backend' in name else '🎨'` | 從 `description` 取 |
+| 按鈕文字 | `description` **全文** | `display_name` |
+| 群組行為 | 跳選單 | 回一句 `@代號` 提示 |
+| 設定檢查 | 無訊號 | 啟動時 warning |
+
+**emoji 那條的判準是「instance 名字裡有沒有 `backend`」** —— 與 `team.yaml`
+完全無關。實測本機七個部署**沒有任何 agent 叫 `backend-*`**，所以全部顯示 🎨。
+（`check_hardcoded_names` 抓不到：它掃的是專有名詞，這是硬編的分類邏輯。）
+
+按鈕文字原本是「🛠️ 維運管家 — 服務監控、套件維護、Bug 修復、部署」全文 ——
+TG 會截斷，而那是給 TEAM.md 用的完整職責描述。修後是「🛠️ 維運管家」。
+
+> 🔴 **群組不跳選單是行為變更，理由是那張選單本來就不適合多人環境**：
+> 它**對所有人可見，而選擇只寫進按的那個人的 session**
+> （`get_or_create(user.id, ...)`）。A 按了「已轉給 🧠 軍師」，
+> B 看到會以為整個群都轉了。改成 `@代號` 提示 ——
+> 那是明確、per-message、對誰都一致的指定方式。
+
+另外選完會**寫回 `topic_map`**：原本只設 `session.instance`，而 session
+**5 分鐘就過期**（`Session.timeout = 300`）—— 同一個 topic 五分鐘後會再問一次。
+
+### 啟動檢查：General 沒有主人 / 有兩個主人
+
+`validate_config` 新增兩條，**在此之前完全沒有訊號**（設定看起來很正常）：
+
+- 有 `group_id` 但沒有任何 `general_topic: true` → 每句話都掉進 clarify
+- **有兩個以上** → 後者覆蓋前者，而順序取決於 dict 迭代，**誰接 General 是不確定的**
+
+實測抓到 `game-team-agent` 的第二種（`paddy-agent` + `ceo-agent` 都設了）。
+
+### 守門
+
+`tests/test_clarify_routing.py` 14 個：按鈕標籤三段 fallback、
+emoji 不得回到硬編、群組回提示不回選單、`is_group` 有傳下去、
+預設維持私聊行為、四種 General 設定組合（含**對本專案真實設定跑一次**）、
+選完有綁定 topic。
+
+`tests/test_version_check_and_update.py` 22 個：版本數字比較
+（**`1.5.9` → `1.5.10` 這種只在 patch 跨過 9 時才出現的錯**）、
+查不到不算過期、關閉時零網路請求、快取阻止重複呼叫、
+開發源被拒（**直接在本專案上驗證**）、wheel 四種驗證、
+安裝失敗不重啟、用 `sys.executable`、以及接線
+（啟動有呼叫且包了 try、callback 有註冊、權限檢查在前、更新走 `to_thread`）。
+
 ## [1.5.6] — 2026-08-24 · ✅ Release
 
 修一行**方向講反的註解** —— 它讓兩個不同部署各產出一份「故障回報」，
