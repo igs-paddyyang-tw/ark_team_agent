@@ -5,8 +5,8 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.6.0-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
-[![Tests](https://img.shields.io/badge/tests-1847%20passed-brightgreen)](#測試與品質)
+[![Version](https://img.shields.io/badge/version-1.6.2-orange)](https://github.com/igs-paddyyang-tw/ark_team_agent/releases)
+[![Tests](https://img.shields.io/badge/tests-2114%20passed-brightgreen)](#測試與品質)
 
 **作者**：paddyyang（[@igs-paddyyang-tw](https://github.com/igs-paddyyang-tw)）
 **規模**：52 模組 / 約 18,500 行 / 1417 個測試 / 6 個生產部署
@@ -71,7 +71,7 @@
 ## 安裝
 
 ```bash
-pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.6.0/ark_team_agent-1.6.0-py3-none-any.whl
+pip install https://github.com/igs-paddyyang-tw/ark_team_agent/releases/download/v1.6.2/ark_team_agent-1.6.2-py3-none-any.whl
 ```
 
 **需求**：Python ≥ 3.11、[Kiro CLI](https://kiro.dev) 已安裝並在 `PATH`
