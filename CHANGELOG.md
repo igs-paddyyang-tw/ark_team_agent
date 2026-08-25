@@ -6,6 +6,113 @@
 
 ---
 
+## [1.6.2] — 2026-08-25 · ✅ Release
+
+port 規則集中到 `constants.py`，衍生規則給唯一計算出口，並**接上啟動撞港檢查**。
+
+> 📌 開發過程中一度標為 1.6.1（只做常數收斂），但沒有 build 也沒有發版。
+> 接上啟動檢查後併成單一 **1.6.2** —— **留一個從未存在的版號比跳號更誤導**。
+
+**Patch** —— 修的是寫死與打架的預設值，沒有新行為（新增的兩個 helper 是把
+既有規則搬到單一出口，不是新功能）。
+
+### 🔴 `website = health_port + 300` 是寫死在使用點的魔術數字
+
+`team.py` 直接寫 `config.health_port + 300`，只留一行註解。
+**改 `health_port` 的人看不到這個隱形連動。**
+
+實際踩到：本機把 PC 團隊服務遷到 `2xxxx`，director 的 health_port 改成 23033
+→ 衍生的 website 變成 **23333**，正好等於 ninja-team 的 port。
+
+沒真撞只是因為 director 沒有 `apps/team-website/src/main.py`，website 根本
+不啟動。**那是運氣，不是設計保證** —— 哪天 director 補上 website 就會撞，
+而撞港的症狀是**執行期靜默搶不到 port**，不是啟動報錯。
+
+### 🔴 `health_port` 預設有兩個打架的值
+
+| 位置 | 值 |
+|---|---|
+| `constants.DEFAULT_TEAM_AGENT_PORT` | 13030 |
+| `cli.py` 產 mcp.json 時 | **33300** |
+| `team_mcp.py` 的 `except ImportError` 分支 | 又一次 13030 |
+
+`team.yaml` 沒寫 `health_port` 時，產出的 mcp.json 會指到 33300 而 daemon
+實際綁 13030 → **mcp 連不上，而且不報錯**。
+
+`team_mcp` 那個 fallback 是死碼 —— 三個啟動點（`mcp.json` / `cli.py` /
+`backend.py`）全都是 `python -m ark_team_agent.team_mcp`，相對 import 不會失敗。
+
+### 收斂後
+
+```python
+# constants.py —— port 規則的唯一定義處
+WEBSITE_PORT_OFFSET: int = 300
+CROSS_TEAM_PORT_DEFAULT: int = 23031
+
+def website_port_for(health_port: int) -> int: ...
+def assert_no_port_collision(health_port, *, reserved=frozenset()) -> None: ...
+```
+
+`reserved` 由**消費端**傳入 —— 套件不硬編別部署的 port（23333 是 ninja 的
+事實，不是套件的）。有一條測試專門釘住這點。
+
+使用點六處改接出口：`team.py` 的 `+300`、`cli.py` 的 `33300`、
+`api.py` 的 `"23031"`、`team_mcp.py` 的重複預設、`cli.py` 兩處把
+webbot port 寫進 help 文字。
+
+### 接上啟動檢查（`team.yaml` 新增 `reserved_ports`）
+
+光有 `assert_no_port_collision()` 沒有用 —— 本套件記載過最常見的缺陷形狀
+就是「建了但沒人呼叫」（`ModeRouter.route()` 有 213 個測試全綠卻零呼叫點）。
+現在 `team.py` 在 **`daemon_api.start()` 之前**呼叫它：
+
+```yaml
+# team.yaml
+health_port: 23033
+reserved_ports: [23333]      # 同機其他服務（ninja-team）
+```
+
+- **由消費端提供，套件不硬編** —— 23333 是 ninja 的事實，不是套件的
+- **留空 = 不檢查** —— 既有部署升級後行為完全不變，直到自己填
+- 設定寫壞（非 list／含非數字）只警告不中止 —— 但**會留下 log**，
+  靜默忽略正是這類設定長期失效的原因
+
+### offset 從 300 改成 5000（🔴 會改變既有部署的 website port）
+
+`+300` 讓 website 落在**與 health 相同的頻段**（23030 → 23330），
+所以它可能撞到另一個服務的 health port —— director 的 23033 → 23333
+正好是 ninja 就是這樣來的。**換 offset 是結構性解法，不是把那一格挪開。**
+
+| 服務 | health | website（舊 +300）| website（新 +5000）|
+|---|---|---|---|
+| nana-team | 23030 | 23330 | **28030** |
+| director | 23033 | **23333 ⚠️ = ninja** | **28033** |
+| aiops | 23036 | 23336 | **28036** |
+
+health 走 `23xxx`、website 走 `28xxx`，後三碼不變好對照。
+
+⚠️ **nana-team 實測原本就在 23330 上聽** —— 升級重啟後會移到 28030，
+反向代理／書籤／防火牆規則要一併更新。
+
+### 守門 22 個 —— 兩條初版是空的，都是反證抓到的
+
+**① 掃描器把字串常值一起剝掉**，而 port 預設常寫成字串
+（`os.environ.get("CROSS_TEAM_PORT", "23031")`）→ `api.py` 那條**永遠不會紅**。
+退回四處舊寫法時只失敗三條才發現。改成「剝註解與 docstring、保留一般字串」。
+
+**② 驗接線用名字比對**（`"assert_no_port_collision" in code`）——
+拿掉呼叫之後 `import` 那行還在，名字照樣命中。
+改用 `ast` 找 **Call 節點**，並驗它的行號在 `daemon_api.start()` 之前。
+
+> 🔴 **兩條都不是「測試沒寫」，是「測試寫了但驗不到東西」。**
+> 而它們一路都是綠的 —— 只有反證會讓空的守門現形。
+> 通則：**新增守門一定要退回舊行為確認它會紅**，綠燈本身不是證據。
+
+另有一條驗**性質**而非數字的：`test_offset_moves_website_out_of_health_band`
+—— 只釘 `offset == 5000` 擋不住有人改成 3000（23030 → 26030，還在 2xxxx）。
+
+---
+
 ## [1.6.0] — 2026-08-24 · ✅ Release
 
 啟動時檢查有沒有新版，有的話在 TG 給一張帶按鈕的卡片一鍵更新。
