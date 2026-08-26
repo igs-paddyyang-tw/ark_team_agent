@@ -6,6 +6,75 @@
 
 ---
 
+## 1.6.3 (2026-08-26)
+
+公告頻道（只出不進）+ 修 `_last_source` 污染。
+
+起點是一個問題：「topic 3／4 保持無主，使用者在那邊發訊息會到 General
+（admin 處理）—— 現在的架構可以不處理對話訊息嗎？」
+實測推翻了原判斷的一半，並挖出一個更嚴重的缺陷。
+
+### 🔴 修：`_last_source` 只寫不清 → 排程輸出被使用者的提問綁架
+
+出口有兩條，而先前**只有一條有防護**：
+
+| 路徑 | 定址依據 | scheduler/system 清除 | 受 `reply_to_origin` 控制 |
+|---|---|---|---|
+| `reply()` 工具（`api.py`） | `_origin_topic` | ✅ 1.4.1 起 | ✅ |
+| **agent stdout（`_poll_output`）** | **`_last_source`** | ❌ **沒有** | ❌ **無條件優先** |
+
+後果：使用者在某個 topic 問一次，`_last_source[instance]` 就被寫死，
+**之後該 agent 的每一次 stdout 輸出（含排程日報）都跑到那個 topic**。
+
+這正是 1.4.x 設計 origin 傳遞時明講要防的「上午問過一次，之後每天日報
+都塞進那個 topic = 污染」—— **當時只做了一半**。
+本套件記過：**收落點要寫入端與讀取端一起收。**
+
+修法沿用同一條判準（`source in ("scheduler", "system")` = 自主工作、沒有人在等），
+但**刻意放在 `_origin_routing_on()` 之外** —— 讀取端本來就不看那個開關，
+照抄旁邊的寫法擺進 `elif` 分支的話，`reply_to_origin` 預設 `False` → **永遠不執行**。
+
+### 新增：`channel.announce_topics` —— 公告頻道（只出不進）
+
+```yaml
+channel:
+  announce_topics: [3, 4]     # 排程可推送；使用者發訊不派工、不回覆，但仍寫進 session
+```
+
+語意：**入口關閉、出口照常**。
+
+- 使用者在裡面發訊 → 走既有的 `_record_group_only()`：不回覆但**仍寫記憶**
+  （對齊 1.4.0：群組是資訊來源，不回話是禮貌，不聽是浪費）。
+  **刻意不另寫一條路** —— 同一件事兩套實作必然漂移。
+- 排程／agent 的 `reply(topic_id=N)` **完全不受影響**
+- 攔截點排在**指令之後**（在公告頻道打 `/status` 仍有效）、
+  **`group_policy` 之前**（「這個 topic 不收訊息」比「這則值不值得回」更早）
+
+#### 🔴 為什麼是白名單，不是 `unowned: ignore` 這種 policy
+
+「所有無主 topic 一律忽略」看起來更省事，但它會把
+**「設定漏綁」偽裝成「刻意忽略」** —— 新增 agent 忘了綁 topic 時，
+那個 topic 的訊息被靜默吞掉，沒有任何訊號。本套件記過太多次這種形狀。
+
+沒列進白名單的無主 topic 仍照舊 fallback，只是 `_resolve_instance()`
+**現在會寫 log**（先前完全沒有訊號）：公告頻道走 `debug`（預期內），
+其餘走 `info`（值得注意 —— 那多半是漏綁）。
+
+### 相容性：對既有部署零影響
+
+`announce_topics` 預設空 list；`_last_source` 的清除只在 `source` 是
+`scheduler`／`system` 時觸發，使用者互動不受影響（回覆仍跟隨提問的 topic）。
+
+### 守門
+
+`tests/test_announce_topics.py`（17 個）。反證：`is_announce_topic` 永遠回
+`False` → 2 紅；清除移回 origin gate 之內 → 1 紅；`team.py` 不傳設定 → 1 紅。
+
+順帶修 `test_gate_has_single_decision_point`：它用 `src.count()` 純字串計數，
+**任何在註解裡提到 `_origin_routing_on()` 的人都會讓它變紅**（本次就踩到）。
+改用 `ast` 數 Call 節點。本套件記過：**常駐假警報的代價不是雜訊，
+是維運開始習慣性忽略該檢查。**
+
 ## [1.6.2] — 2026-08-25 · ✅ Release
 
 port 規則集中到 `constants.py`，衍生規則給唯一計算出口，並**接上啟動撞港檢查**。
