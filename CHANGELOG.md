@@ -6,6 +6,107 @@
 
 ---
 
+## 1.6.5 (2026-08-27)
+
+`reply(topic_id=N)` —— 顯式指定送到哪個 Telegram topic。
+
+### 🔴 起點：參數被靜默忽略，訊息去了看起來合理但不對的地方
+
+排程 prompt 寫 `reply(text, topic_id=4)` 想推公告到手動建的 topic，
+訊息卻沒出現在那裡。查證後三層都對不上：
+
+| 層 | 實況（1.6.4 及之前） |
+|---|---|
+| `reply` 的 schema | 只有 `text`／`kind`／`style`／`template`，**沒有 `topic_id`** |
+| 會被 schema 擋嗎 | ❌ 沒宣告 `additionalProperties: false` → **放行，但 handler 不讀** |
+| 訊息去向 | `_resolve_output_topic()`：worker 有 `group` → **送到所屬 leader 的 topic** |
+
+> 🔴 **最糟的組合：schema 不擋、handler 不讀、而訊息確實送達了某個地方。**
+> 使用者看不到訊息，也不知道它去了哪。
+
+### 設計
+
+**① 顯式 `topic_id` 優先序最高**（蓋得過 origin）
+
+顯式指定是呼叫端的決定，套件不該猜。但互動情境下它會蓋掉
+「回使用者問的地方」（那多半是誤用），所以覆寫時留 `log.info` 可追。
+
+**② 🔴 白名單擋在送出之前**
+
+```
+允許 = _topic_map.values() ∪ channel.announce_topics ∪ {general_topic_id}
+```
+
+**不能只用 `_topic_map`** —— 手動在 TG 建的公告 topic 根本不在裡面，
+而那正是這個功能的主要用途。
+
+> 💡 這讓 1.6.3 的 `announce_topics` 語意更完整：
+> 「只出不進」→「只出不進，**且可被顯式指定為出口**」。
+> **一份設定同時表達「不收訊息」與「可以送過去」，語意一致。**
+
+不在集合裡 → **拒絕並回可行動的錯誤**（列出可用的 + 告訴人去哪設定），
+而不是送出去之後失敗。**打錯數字時 agent 當場看得到。**
+
+**③ 不傳就完全維持舊行為** —— `topic_id: int | None = None`。
+
+### 相容性：零影響
+
+| 情境 | 結果 |
+|---|---|
+| 不傳 `topic_id` | 行為完全不變 |
+| 舊版 daemon 收到帶 `topic_id` 的請求 | ✅ Pydantic **忽略未知欄位，不拋例外**（已實測） |
+| 新版 daemon + 舊版 MCP | 不傳就是舊行為 |
+
+`team_mcp` 只在**有值時**才把 `topic_id` 放進 payload，
+舊 daemon 收不到多餘欄位。
+
+### 守門
+
+`tests/test_reply_topic_id.py`（14 個）：schema 有宣告、**handler 真的傳下去**
+（1.6.4 就是漏在這）、白名單三個來源、顯式排在 origin 之後、
+檢查在送出之前、錯誤訊息可行動、覆寫留 log、`group_leader` 被清掉、舊版相容。
+
+**反證**：拿掉優先序段落 → **5 紅**；白名單漏掉 `announce_topics` → **2 紅**；
+handler 不傳（回到 1.6.4 的缺陷）→ **2 紅**。
+
+## 1.6.4 (2026-08-26)
+
+三個獨立回報，一起收進本版：進度條顯示半句系統指令、啟動訊息漏版本號、
+decider 回完查詢卡 AWAITING_REPLY 觸發假的「決策者卡住」告警。
+
+### 🔴 修：系統注入的提詞污染進度條摘要（`last_task`）
+
+使用者在 TG 看到進度條的 `📋` 行顯示「【系統掛起偵測】你已閒置…2. 有任」後被硬切。
+根因鏈三環：① hang 提詞用 `send_message` 發給 agent，預設 `source="user"`；
+② daemon 記成 `state.last_task[:60]`，斷在「2. 有任」（剛好 60 字元）；
+③ ToolTracker 拿 `last_task` 當進度條摘要顯示。
+
+`last_task` 的語意是「使用者交辦的任務」，但系統自動注入的提詞（hang 喚醒、
+掛起偵測）也走同一條 `send_message` → 被誤當任務摘要。
+
+修法：`source in {"system","scheduler"}` 時**不更新 `last_task``；顯示上限
+`60 → 100`，超出補「…」讓截斷處有視覺訊號。兩個 hang 提詞標成 `source="system"`。
+
+### 修：啟動訊息「部分失敗」分支漏版本號
+
+「全員到位」那則啟動訊息早有 `📦 ark-team-agent v…`，但**「部分失敗」那則漏掉**
+（AIOps 在更舊的 1.4.11 兩則都沒有，才會回報成整則缺）。把版本計算提到分支之前
+（hoist），兩則共用同一 `_ver_line`，與 `/status` 的「主程式 v{ver}」對齊。
+
+### 🔴 修：decider 回完一次性查詢卡 AWAITING_REPLY → 假的「決策者卡住」
+
+decider（leader/admin）回答完使用者的一次性查詢後，`reply()` 因來源是 `user`
+而標成 AWAITING_REPLY 等接話。但查詢類對話使用者常不會再回 → 停到 30 分鐘被
+decision rule 4（decider-stuck）誤報「決策者卡住」。
+
+它**沒有卡** —— 只是這輪對話結束、沒有待辦。修法（根治）：新增
+`hang_detector.awaiting_idle_minutes`（預設 20m，**必須 < Rule 4 的 30m**），
+AWAITING_REPLY 無 inbound 超過此值 → 降為 IDLE。IDLE 不被 Rule 4 觸發
+（它只看 AWAITING_REPLY），且仍在 `send_message` 可投遞集合裡（新訊息拉回 RUNNING）。
+
+與既有 `_awaiting_safety_net_due`（2× escalation、拉回 RUNNING、防死鎖）互補：
+本層門檻近、降為 IDLE、治誤報。抽成 `_awaiting_idle_degrade_due()` 純判斷便於測試。
+
 ## 1.6.3 (2026-08-26)
 
 公告頻道（只出不進）+ 修 `_last_source` 污染。
