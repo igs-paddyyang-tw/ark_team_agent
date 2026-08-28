@@ -6,6 +6,63 @@
 
 ---
 
+## 1.6.7 (2026-08-28)
+
+收斂通報的三個不一致（1.6.6 盤點時列出的）。
+
+### 🔴 ① `notify_recovery` 完全不受 `notifications` 控制
+
+設 `notifications.startup: private` 只擋得住啟動橫幅，
+**恢復通知照樣無條件進 General** —— 在有人聊天的群裡，
+agent 每次崩潰重啟都跳一次「已恢復」。
+
+> 🔴 `NotificationsConfig` 的 docstring 寫
+> 「這些是服務自己發的訊息：**啟動橫幅、重啟通知**」——
+> **「重啟通知」寫在說明裡，但實作只涵蓋了啟動橫幅。**
+> 說明比實作寬，而讀設定的人會照說明去設。
+
+新增 `notifications.recovery`（`both`／`group`／`private`／`off`），
+**預設 `group` = 維持 1.6.6 行為**，既有部署零影響。
+順帶讓它支援私訊（原本只有 General 一條路）。
+
+### 🔴 ② 收件人有三套推導
+
+| 通報 | 原本問誰 |
+|---|---|
+| L3 拍板卡 · `notify_paddy` | `_owner_chat_id()`（admin 優先） |
+| 掛起升級 | 掃 `private_chat_map` 找 admin **或 manager** |
+| **新版本通知** | **`allowed_users[0]`** |
+
+第三套與前兩套的**對象型別都不同**（TG user id vs 綁了 private_chat 的
+instance）—— 同一個部署裡它們可能指向不同的人。
+
+`notify_new_version` 改用 `_owner_chat_id()`，
+**保留 `allowed_users` 當最後備援**（純私訊部署可能沒有任何 instance
+綁 private_chat，那時它是唯一線索）。
+
+掛起升級的 admin+manager 是**刻意的**（升級要給更多人），維持不變。
+
+### 🔴 ③ `owner_chat_id` 有兩份實作 + 兩份狀態
+
+`api.DaemonAPI.owner_chat_id()` 與 `TelegramAdapter._owner_chat_id()`
+邏輯一字不差。更麻煩的是狀態：
+
+| 誰 | `_private_chat_map` 從哪來 |
+|---|---|
+| `DaemonAPI` | `team.py` 從 `config.instances` 建的 dict |
+| `TelegramAdapter` | 逐一 `bind_private_chat()` 綁進去 |
+
+內容目前一致（同一來源），但**執行期動態綁定只會更新 adapter 那份**。
+
+`api` 改為委派給 adapter；headless（沒有 TG）時才用自己那份。
+
+### 守門
+
+`tests/test_notify_consistency.py`（15 個）。
+**反證**：`notify_recovery` 拿掉開關 → **3 紅**；
+`notify_new_version` 改回 `allowed_users[0]` → **2 紅**；
+`api.owner_chat_id` 不委派 → **1 紅**。
+
 ## 1.6.6 (2026-08-27)
 
 系統通報的第三種去向：**哪裡都不到**。
