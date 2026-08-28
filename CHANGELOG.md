@@ -6,6 +6,67 @@
 
 ---
 
+## 1.6.6 (2026-08-27)
+
+系統通報的第三種去向：**哪裡都不到**。
+
+### 🔴 `_notify_to_instance_channel` 的第三段原本什麼都不做
+
+```
+① private_chat → 私訊
+② 自己的 topic  → topic
+③ 兩者都沒有   → 什麼都不做（不寫 log、不退回）
+```
+
+呼叫者全是**成本通報**（`notify_cost_warn` / `notify_cost_pause` /
+`notify_cost_resume`），而實測兩個部署都命中第 ③ 條：
+
+| 部署 | instances | 有 `private_chat` | 有 `topic_id` |
+|---|--:|--:|--:|
+| paddy | 7 | **1** | **0** |
+| hoyeah | 15 | **1** | **0** |
+
+**其餘 6／14 個 agent 的成本警告從來沒送出去過。**
+
+> 🔴 「成本已達上限、agent 被暫停」是最不該無聲的一類通報。
+> 而 `notify_hang` 另有一條「掃 admin/manager 的 private_chat」的保險，
+> **成本通報沒有** —— 這個不對稱就是補 fallback 的理由。
+
+### 🔴 同場加映：`group` 的判準原本只有一半在用
+
+`api._resolve_output_topic()`（`reply()` 用的）**會看 worker 的 `group`**
+→ 回覆進所屬 leader 的 topic。而 `_notify_to_instance_channel` **不看** ——
+於是同一個 worker 的**回覆進組 topic、成本通報卻落到 General**。
+
+實測 hoyeah：15 個 instance 裡 **9 個 worker 設了 `group`**，全部受影響。
+
+> 🔴 **同一件事兩套實作必然漂移**（本套件記過多次）。
+> 這裡沿用 `_resolve_output_topic` 的判準：`role == "worker"` 且有 `group`。
+
+### 修法：五段出口
+
+```
+private_chat → 自己的 topic → 組長的 topic（worker）→ General（標明來源）→ log.error
+```
+
+兩個實作細節：
+
+- **送失敗時不 `return`** —— 原本私訊送失敗只 `log.warning` 然後 `return`，
+  通報一樣消失。現在往下退到 topic／General。
+- **退回 General 要標明來源**（`⚠️ [📊 數據 無專屬出口]`）——
+  否則群組裡會出現一則不知道在講誰的成本警告。
+- 連 `group_id` 都沒有（純私訊部署）→ **`log.error`**，不再靜默。
+  那是設定問題，要看得見。
+
+### 守門
+
+`tests/test_notify_fallback.py`（13 個）：四段出口各一、退回要標來源、
+私訊失敗要往下退、全失敗要 log、三個成本通報都走同一條路（`ast` 驗）。
+
+**反證**：拿掉 General 段 → **5 紅**；私訊失敗後 `return` → **3 紅**；
+退回不標來源 → **1 紅**；
+拿掉 `group` 解析 → **1 紅**；非 worker 也借用組長 topic → **1 紅**。
+
 ## 1.6.5 (2026-08-27)
 
 `reply(topic_id=N)` —— 顯式指定送到哪個 Telegram topic。
