@@ -6,6 +6,78 @@
 
 ---
 
+## 1.6.9 (2026-08-28)
+
+### 🔴 hang 的定義錯了 —— 「很久沒說話」不等於「掛住」
+
+1.6.8 修掉緊迫迴圈（單一 agent 每 35 秒）之後，剩下**每 30 分鐘一次的整批重啟**：
+
+```
+18:18:05  leader-agent  idle for 1811s → auto-restarting
+18:18:12  ai-dev-agent  idle for 1818s → auto-restarting
+18:18:17  coder-agent   idle for 1823s → auto-restarting
+18:18:22  qa-agent      idle for 1828s → auto-restarting
+18:18:27  data-agent    idle for 1833s → auto-restarting
+```
+
+**7 個 agent 全部 `status=running`、同時觸發，而沒有一個是壞的** —— 只是沒工作。
+
+#### 根因
+
+hang 偵測只問「`last_output` 多久沒前進」。於是**從沒被派過工的 agent 必然中招**：
+
+```
+啟動 → 產出橫幅 → 沒人找它 → last_output 不再前進
+     → 30 分鐘後判定掛住 → auto_restart 重啟
+     → 又停在新的啟動時刻 → 每 30 分鐘一次，永遠
+```
+
+⚠️ **`IDLE` / `AWAITING_REPLY` 擋不住這個** —— 那兩個狀態只在
+**完成過任務之後**才會被設，而受害者是**從沒收過任務**的 agent，永遠停在 `RUNNING`。
+
+實測 paddy：7 天累計 **3285 次** auto-restart。而每次重啟都帶 `--resume`，
+kiro-cli 在 resume 時自己會發一則
+「In a few words, summarize our conversation so far.」並取得完整回覆
+→ 一來一回追加進 history。**這就是 context 持續膨脹的主幹。**
+
+#### 修法：補上第三個時間戳
+
+1.4.7 把 `last_activity`（inbound ∪ output）拆出 `last_output`（只有 output），
+解掉「一直收訊息但從不回覆的 agent 永遠不被判 hang」。
+**但那次只做了一半 —— 反過來的情況沒解。**
+
+新增 `InstanceState.last_inbound`（只由「我們真的寫進 stdin」更新），
+於是問得出真正的問題：
+
+```python
+def _has_unanswered_request(state) -> bool:
+    """hang 的定義是「我問了，它沒答」，不是「它很久沒說話」。"""
+    inbound = state.last_inbound or 0
+    if not inbound:
+        return False          # 從沒送過東西給它 → 它沒有義務說話
+    return inbound > (state.last_output or 0)
+```
+
+三處判定（hang 通知／escalation／wake-retry restart）各加這一道，
+漏一處就會從那裡漏出去（守門用 `ast` 數呼叫節點，要求恰好 3 處）。
+
+#### 效果
+
+| | auto-restart / 小時 |
+|---|---:|
+| 1.6.7（修正前） | 26–81（典型 ~50） |
+| 1.6.8（修掉緊迫迴圈） | ~14 |
+| **1.6.9（本版）** | **預期 ~0**（閒置不再觸發） |
+
+### 守門
+
+`tests/test_restart_loop.py` 12 條。反證：判準恆真 → 3 紅；
+`inbound == 0` 當成掛住 → 2 紅；只加一處 → 1 紅；欄位不記錄 → 1 紅。
+
+> 💡 最後一條特別重要：**只加欄位不記錄的話，判準永遠回 False → hang 偵測整條失效**
+> —— 那比誤判更糟（真的掛住也沒人管）。守門要求 `send_input` 與
+> `last_inbound` 更新一一對應。
+
 ## 1.6.7 (2026-08-28)
 
 收斂通報的三個不一致（1.6.6 盤點時列出的）。
