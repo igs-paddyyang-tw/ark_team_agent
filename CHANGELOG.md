@@ -6,6 +6,60 @@
 
 ---
 
+## 1.7.5 (2026-09-02)
+
+### 🔴 hang 偵測看的是「有沒有輸出」，而那不等於「有沒有回應」
+
+1.6.9 把 hang 的定義從「它很久沒說話」改成「我問了它沒答」，
+判準是 `last_inbound > last_output`。**但 `last_output` 記的是
+process 的 stdout 行數有沒有增加** —— agent 思考、讀檔、呼叫工具
+全都會產生 stdout。
+
+於是一個「一直在忙、但從不回應任何請求」的 agent：
+
+```
+last_output  一直前進  →  inbound > output 永遠不成立  →  hang 偵測完全看不到它
+```
+
+實測病例（aiops / ic-agent）：
+
+| 觀測 | 值 |
+|---|---|
+| 最後一次對外回應 | 2026-08-28 18:44 |
+| 期間 `peer-reply timeout` | **142 次**（obs → ic） |
+| `/api/health` | **9/9 running、degraded 空** |
+| hang detector 命中 | **0** |
+| 它真正的排程任務（daily-summary） | 同期 **4 次靜默失敗** |
+
+**修法**：新增 `InstanceState.last_reply`（真正呼叫過對外通訊工具的時間），
+`_has_unanswered_request` 與 hang 的 idle 參考點 `_hang_ref` **兩處一起**
+改用它。只換其中一處無效 —— 判準會成立，但 idle 秒數仍由 stdout 決定。
+
+`Daemon.mark_reply()` 是唯一寫入點，由 `api.py` 的**五個**對外通訊端點呼叫
+（`/api/reply`、`/api/send`、`/api/reply-photo`、`/api/reply-file`、`/api/log`）。
+第一次實作只接了前兩個 —— 守門因此明確斷言呼叫點數量。
+
+> ⚠️ **行為變更**：一個收到請求後長時間不回應的 agent，現在會在
+> `hang_detector.timeout_minutes` 後被通報（先前不會）。
+> 這正是本版要修的東西，但若某個部署有「刻意長時間沉默工作」的 agent，
+> 升級後會看到新的 hang 通報 —— 那是正確的訊號，不是回歸。
+> 有 `auto_restart: true` 的部署請先確認門檻夠長。
+
+### 🟠 同一對 agent 重複逾時進 degraded
+
+`peer-reply timeout` 只 nudge**等待方**叫它重試，於是形成迴圈：
+
+```
+A 發問 → B 不回 → 逾時 → nudge A「請重試」→ A 重發 → 回到開頭
+```
+
+7 天 142 次，而沒有任何一層認為這是異常。現在同一對 `(sender → target)`
+累積 `PEER_TIMEOUT_DEGRADE_AT`（3 次 ≈ 45 分鐘）就進 `degraded`，
+接到已經有人在看的地方（同 1.7.4 的做法）。
+
+對方一旦回應，`mark_reply()` 會清掉等它的計數與標記 —— **自癒是刻意的**：
+degraded 反映當下狀態，不是歷史事件的累積。
+
 ## 1.6.9 (2026-08-28)
 
 ### 🔴 hang 的定義錯了 —— 「很久沒說話」不等於「掛住」
