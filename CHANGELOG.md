@@ -6,6 +6,53 @@
 
 ---
 
+## 1.7.7 (2026-09-02)
+
+### 🔴 撞港會讓整個 daemon 死掉 —— 而 1.7.6 讓每個部署都開始綁那個 port
+
+uvicorn 綁不到 port 時呼叫 `sys.exit(STARTUP_FAILURE)`，拋的是
+**`SystemExit`** —— 它繼承 `BaseException` 而**不是** `Exception`：
+
+```python
+issubclass(SystemExit, Exception)   # False
+```
+
+所以 `team.py` 包住整段的 `except Exception` **絕對抓不到它**。
+而 `serve()` 跑在 `asyncio.create_task()` 裡，`SystemExit` 會傳播到
+event loop → `asyncio.run()` 整個中止 → **daemon 起不來**（實測 exit code 3）。
+
+**1.7.6 把這個從低機率變成真實風險**：在那之前，這條路只在有
+`apps/team-website/` 時才走（本機四個部署只有一個）；加了內建頁之後
+**每個部署都會綁 `health_port + 5000`**。
+
+而 ninja-team 的 health 是 `23333` → website `28333` ——
+**那正是它自己 web dashboard 的 port**（`.env` 的 `WEB_PORT`）。
+差一步就會讓它的 daemon 起不來。
+
+> 該注意的是 `assert_no_port_collision()`（1.6.2）擋不住這個 ——
+> 它只檢查 `reserved_ports` 裡**宣告過**的 port，沒宣告的撞港它看不到。
+> aiops / director / paddy 沒炸是**運氣**（那三個 port 剛好空著）。
+
+**修法**：綁之前先試綁（`_port_bindable()`）。不可用就 `log.warning` 並
+**兩條路徑都跳過** —— 自訂網站那條同樣會 `SystemExit`（那是 1.7.6 之前
+就存在的缺陷，只是機率低）。
+
+```
+website port 38333 已被佔用 —— 跳過網站啟動（daemon 與 agents 不受影響）。
+若要換 port 請改 health_port，或設 dashboard.builtin_page: false
+```
+
+端到端驗證：故意佔住 38333 再重啟 paddy → **daemon 7/7、degraded 空**，
+只留那一條可行動的 warning。
+
+> 用「試綁」而不是「連線看看有沒有回應」：佔用者可能不說 HTTP
+> （也可能是別的協定），而我們要問的問題就是「我綁得上去嗎」——
+> 直接試綁才是那個問題的答案。
+
+守門 5 條（helper 行為 / 檢查必須排在兩條路徑之前 / 不可用時兩條都跳過 /
+必須 log 不得靜默 / `SystemExit` 那個事實要留在註解裡不被當成多餘檢查刪掉），
+反證 3 項各紅 1-3 條。
+
 ## 1.7.6 (2026-09-02)
 
 ### 🔴 dashboard 後端閒置三個月 —— 因為它的前端在一個 daily commit 裡被無聲刪掉
