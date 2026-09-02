@@ -6,6 +6,90 @@
 
 ---
 
+## 1.7.6 (2026-09-02)
+
+### 🔴 dashboard 後端閒置三個月 —— 因為它的前端在一個 daily commit 裡被無聲刪掉
+
+`dashboard_api.py`（298 行、10 個端點：stats / agents / board / timeline /
+costs.trend / autopilots）從 2026-05 起就完整可用。掃過全機 —— **零消費者**。
+連自己寫了 37 個檔網站的 nana-team 都沒用它。
+
+追下去發現原因：它的前端 `ark_team_webbot` 在 `a39f22cb`
+（2026-05-17，**1649 檔 / +325,906 行**的 daily commit）裡被刪除，
+而那個 commit：
+
+| | |
+|---|---|
+| 訊息 | `chore(daily): 2026-05-16 Skills expansion (48 skills) + ToolTracker...` |
+| 提到 webbot | **一個字都沒有** |
+| CHANGELOG | **沒有記載** |
+| 同時做的事 | 給 5 個測試檔各加一行 **`pytest.importorskip("ark_team_webbot")`** |
+
+> 🔴 **刪除實作的同一個 commit，順手讓測試不會變紅。**
+> 這比單純刪掉更難發現 —— 測試從此永遠是綠的，
+> 在全量 2547 passed 裡看起來完全正常。而 CLI 的 `webbot` 子命令留著，
+> 執行即 `ModuleNotFoundError`，三個月沒有人碰到。
+
+### 新增：內建唯讀儀表板（零設定）
+
+`apps/team-website/src/main.py` **不存在時**，套件在 website port
+（`health_port + WEBSITE_PORT_OFFSET`）起一個單檔唯讀頁，
+打自己的 `/api/dashboard/*`。
+
+- **有自訂網站的部署完全不受影響** —— 內建頁只在「本來什麼都不會起」時接管
+- **單檔內嵌**：無 npm、無 build、無 CDN。消費端是 daemon，
+  不該因為一個狀態頁而長出前端工具鏈，且部署環境不保證能連外
+- **綁 `127.0.0.1`**，與既有 team-website 一致
+
+**唯讀是設計邊界，不是偷懶**：`dashboard_api` 有 `POST /board`、
+`DELETE /board/{id}`、`POST /autopilots/{name}/trigger`，而 daemon API
+**目前沒有任何認證**（靠綁 127.0.0.1）。把無認證的寫入操作放上瀏覽器
+是另一個層級的決定。守門會檢查頁面實際打的每個端點都在唯讀白名單裡。
+
+`dashboard.builtin_page`（預設 `true`）是回退出口。
+**預設開是刻意的** —— 它不改變任何既有部署的行為（有自訂網站的照舊，
+沒有的那個 port 原本就是空的），而 opt-in 的下場本檔記過太多次：沒有人會去開它。
+
+### 移除：webbot 殘留
+
+- `cli.py` 的 `webbot` 子命令 + `cmd_webbot_api` / `cmd_webbot_scheduler` /
+  `cmd_webbot_start` + 對 `ark_team_webbot` 的 import（約 2000 bytes）
+- `tests/test_webbot_*.py` ×4（測的是不存在的模組）
+- `DEFAULT_WEBBOT_PORT` **保留但標註已無使用者** —— 3030 是這個生態系用過的
+  port，刪掉會讓日後有人重新分配它而不知道歷史
+
+### 🔴 兩個「守門全綠而實機是壞的」錯（同版修掉）
+
+實機起來之後才看到的：
+
+| # | 錯 | 為什麼守門看不到 |
+|:-:|---|---|
+| ① | `team.py` 傳 `config.name`，而 **`TeamConfig` 沒有這個欄位** | 守門測 `render()` 本身（直接傳字串），沒測 team.py 的呼叫。而 `except Exception` 把 AttributeError 降級成 warning → 服務照常起 7/7，只有看 log 才發現頁面沒起來 |
+| ② | 頁面讀的欄位名是**憑印象猜的**（`last_task` / `crash_count` / `st.cost.today` / `d.usd`） | 頁面照樣渲染、HTTP 200，那幾欄一律顯示「—」。**沒有錯誤、沒有 log，只是資料是空的** |
+
+逐一 `curl` 取回實際結構後對齊：
+
+```
+/agents      → name status role display_name last_activity
+/stats       → running_agents total_agents cost_today_usd tasks{total,...}
+/board       → id title assignee status priority created_at completed_at
+/timeline    → timestamp instance type detail source
+/costs/trend → date total_usd by_instance（+ note）
+```
+
+補三類守門（共 23 條）：
+- 呼叫點的每個 `config.X` 必須是 `TeamConfig` 真有的欄位
+- 頁面讀的欄位名必須在 `dashboard_api.py` 出現過
+  —— **端點改名時會紅，而不是靜默變成一排「—」**
+- `EXPECTED` 清單裡的欄位頁面真的要用到（避免它變成過時的裝飾品）
+
+> 🔴 兩個錯的共同形狀：**測試 fixture 把「輸入從哪來」也一起假設掉了。**
+> 本檔記過同型（1.2.19 的代號推導：單元測試全綠但實機全錯）。
+> 判準：**測「產生器」時，要連「呼叫它的人傳什麼」一起測。**
+
+守門 18 條，反證 6 項（加寫入呼叫 / 打白名單外端點 / 引用 CDN /
+內建頁蓋掉自訂網站 / 預設改 opt-in / webbot import 復活）各紅 1-2 條。
+
 ## 1.7.5 (2026-09-02)
 
 ### 🔴 hang 偵測看的是「有沒有輸出」，而那不等於「有沒有回應」
