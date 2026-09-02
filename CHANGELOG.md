@@ -6,6 +6,44 @@
 
 ---
 
+## 1.7.8 (2026-09-02)
+
+### 🔴 1.7.7 的撞港檢查造成常駐假警報
+
+1.7.7 把 port 檢查放在最前面，於是**明確設了
+`dashboard.builtin_page: false` 的部署照樣被警告**：
+
+```
+ninja-team 實測（16:01）：
+  WARNING website port 28333 已被佔用 —— 跳過網站啟動
+```
+
+而它關掉了內建頁、也沒有 `apps/team-website/` —— **根本不需要那個 port**，
+卻每次啟動都被警告一次（28333 是它自己的 web dashboard）。
+
+> 🔴 本檔記過：**常駐假警報的代價不是雜訊，是維運開始習慣性忽略該檢查。**
+> 而這次的假警報是 1.7.7 自己造成的 —— 那個檢查本身是對的，只是問錯了順序。
+
+**修法**：先問「要不要網站」，才問「port 綁得上嗎」。
+
+```python
+_wants_site = _has_custom or config.dashboard.builtin_page
+if not _wants_site:
+    log.debug(...)                       # 不是異常 → debug 不 warning
+elif not _port_bindable(...):
+    log.warning(...)                     # 真的要綁卻綁不上 → warning
+elif _has_custom:  ...                   # 自訂網站
+else:              ...                   # 內建頁
+```
+
+守門 4 條（「要不要」必須排在 port 檢查之前 / 不需要網站時只 debug /
+`_wants_site` 必須涵蓋兩個來源 / 檢查仍排在兩條啟動路徑之前），
+反證 1 項紅 3 條。
+
+> 💡 判準：**一個檢查該在「確定要做那件事」之後才跑。**
+> 提前檢查會對「不做那件事的人」也發出警告 ——
+> 而他們無法（也不需要）處理它。
+
 ## 1.7.7 (2026-09-02)
 
 ### 🔴 撞港會讓整個 daemon 死掉 —— 而 1.7.6 讓每個部署都開始綁那個 port
