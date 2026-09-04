@@ -6,6 +6,60 @@
 
 ---
 
+## 1.7.12 (2026-09-04)
+
+### 進度列孤兒收尾 —— 收尾點原本綁在兩個不保證發生的事件上
+
+`ToolTracker.finalize()`（把「第 N 步 撰寫中…」收成完成狀態）只在兩處觸發：
+
+| 觸發點 | 條件 | 保證發生？ |
+|---|---|---|
+| `telegram.py` 的輪詢 | **下一段 stdout 到來** | ❌ |
+| `api.py` 的 reply | **送出 reply** 時 `tracker.reset()` | ❌ |
+
+agent 中途停產出（逾時／中斷／hang）且不送 reply → 兩條路都不觸發
+→ 進度訊息凍在原地永不收尾。
+
+**症狀會誤導**：看起來像有東西還在跑、或像路由被搶
+（原始回報者正是這樣誤判成「維運長對話被搶」）。
+
+### 成因就在那個 `continue`
+
+```python
+# 沒有新輸出 — 檢查是否該 flush
+if not buffer:
+    continue          # ← buffer 清空後直接跳過，tracker 永遠不被檢查
+```
+
+### 修法：加第三條路（不取代原本兩條）
+
+`ToolTracker.is_stale(threshold)` + 輪詢迴圈在 `continue` **之前**檢查：
+
+```python
+if tool_tracker.is_stale(_ORPHAN_FINALIZE_SECS):
+    await tool_tracker.finalize()
+    tool_tracker.reset()
+```
+
+- 用既有的 `_last_edit` 當基準，**不另記時間戳**（多一份狀態就多一個會漂移的地方）
+- `_ORPHAN_FINALIZE_SECS = 180`，刻意遠大於 `idle_threshold`（2 秒，那是 buffer
+  flush 用的）—— agent 思考、等上游 API、跑長工具的正常間隔可能有數十秒，
+  **收尾太快會把「還在跑」的任務誤標成完成**
+- 同時比 hang 偵測（預設 60 分）快，否則使用者早就看到凍住的進度列了
+
+> 💡 **它的放大因子已在 1.7.10 消失**：問題單原本說「reply 通道故障使排程 agent
+> 永遠送不出 reply → 孤兒必然增生」。1.7.10 之後 headless 的 reply 走 log 出口
+> 並呼叫 `_rollback_reply_status`，那條放大路徑斷了。所以它從「必然」降回「偶發」。
+
+### 守門
+
+12 條，反證 5 項各紅 1-3 條。
+
+> 🔴 其中一項反證第一次**沒有變紅** —— `test_no_activity_is_not_stale` 用新建的
+> tracker（`_last_edit` 是 0），第二個條件先短路，`has_activity` 那半邊從沒被驗到。
+> 補上 `_last_edit` 的前置條件後才真的守住。
+> **「反證抓到空守門」正是它存在的理由。**
+
 ## 1.7.11 (2026-09-04)
 
 ### 🔴 `allowed_targets = []` 的註解與行為相反（不改行為，只讓語意誠實）
