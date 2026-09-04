@@ -6,6 +6,85 @@
 
 ---
 
+## 1.7.10 (2026-09-04)
+
+### 🔴 headless 部署的 reply 從 1.7.0 起每天落空 —— 而症狀是「看不見」不是報錯
+
+`mode: headless` 的部署（`team.py:584` 跳過整個 TG 區塊）**永遠不會有** TG adapter。
+1.7.0 之前那不是問題：排程啟動綁在同一個 TG 分支裡，headless 部署的排程
+**根本不跑**，所以沒有人會叫 agent `reply()`。
+
+1.7.0 M2 把排程搬出 TG 分支（那本身是對的），於是排程開始叫醒 agent，
+而它們呼叫 `reply()` 在沒有 TG 出口的部署上必然落空：
+
+```
+no telegram adapter 次數（paddy，唯一的 headless 部署）
+  08-25 ~ 08-30    5 次
+  08-31（1.7.0）  11 次   ← 排程開始跑
+  09-01 / 09-02   11 / 10
+  09-03           27 次
+```
+
+4 個 job 叫 agent reply（`hourly-check` / `daily-summary` /
+`daily-ops-report` / `daily-news`），**連續五天產出全部消失而沒有人發現**。
+
+> 🔴 TG 回報的問題單把根因判成「`team_mcp` 子進程的 api 實例 `self.tg=None`
+> （架構層實例隔離）」。**三個實測都推翻它**：
+> ① `team_mcp` 的 reply 是走 HTTP 打主進程（`/api/reply`），不是自建實例
+> ② `no telegram adapter` 只發生在 paddy（64 次），其他四個部署 **0 次**
+> ③ paddy 是唯一 `mode: headless` 的
+>
+> 它建議的修法（team_mcp 加 TG fallback）對真根因無效 —— 主進程本來就沒有 tg。
+
+### 修法一：headless 的 reply 走 log 出口
+
+```python
+if self.headless and not self.tg:
+    log.info("📝 REPLY(headless) %s「%s」", instance, text[:200])
+    if len(text) > 200:
+        log.info("📝 REPLY(headless) %s 全文：\n%s", instance, text)
+    return {"ok": True, "channel": "log", "note": "headless 部署無 TG 出口…"}
+```
+
+**回 `ok: True` 是刻意的** —— 對 agent 而言它確實完成了回報，
+失敗的是「這個部署沒有對外通道」，那不是它能處理的事。
+回 error 會讓它以為自己做錯了。而 `channel` 與 `note` 讓它知道實情。
+
+分支排在「等 3 秒重試」**之前** —— headless 永遠不會有 adapter，
+等待是白費，而且會讓每次 reply 多花 3 秒。
+
+### 修法二：「headless + 有 job 叫 reply」進 degraded
+
+接到已經有人在看的地方（同 1.7.4 / 1.7.5 的做法），而不是只寫一行啟動 log。
+警告同時指出可行的替代（`mode: full`，或讓那些 job 改走檔案／知識庫產出）。
+
+```
+degraded: ['headless_no_reply_channel:4 jobs(hourly-check,daily-summary,daily-ops-report)']
+```
+
+### 修法三：狀態回退的訊息不再說謊
+
+`_rollback_reply_status` 原本寫死「⚠️ reply 失敗，狀態回退」——
+而 headless 走的是**成功路徑**，看 log 的人會以為訊息遺失了。
+
+改成帶 `reason` 參數；真正的失敗仍說「失敗」，不把所有訊息軟化掉。
+
+```
+舊：⚠️ reply 失敗，狀態回退：qa-agent awaiting_reply → RUNNING
+新：⚠️ headless 無 TG 出口（內容已入 log），狀態回退：qa-agent awaiting_reply → RUNNING
+```
+
+> 這正是 2026-09-04 問題單缺陷 #3 在問的那條（「訊息是否遺失？」）。
+
+### 守門
+
+17 條，5 項反證（移除 headless 分支 / 回 error 而非 ok+log / 不印內容 /
+用不存在的變數 / 旗標設在 agents 啟動之後）各紅 1-5 條。
+
+> ⚠️ 實作時我第一版寫了不存在的變數 `scheduler_cfg`，
+> 而外層的 `except Exception` 會把 `NameError` **靜默吃掉** —— 整段檢查等於不存在。
+> 守門因此有一條專門釘「必須用真實的 `load_scheduler_config()`」。
+
 ## 1.7.9 (2026-09-03)
 
 ### 🔴 回退 1.7.5 的 hang 判準 —— 它誤判了所有正常工作的 agent
