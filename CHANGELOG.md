@@ -6,6 +6,80 @@
 
 ---
 
+## 1.7.11 (2026-09-04)
+
+### 🔴 `allowed_targets = []` 的註解與行為相反（不改行為，只讓語意誠實）
+
+TG 問題單提「manager 派工無目標白名單」。**查證後那個需求不成立** ——
+`/api/send` 的 role 路由規則（`api.py:709`）一直在擋，實測：
+
+```
+qa-agent(worker) → admin-agent
+403「qa-agent（worker）不能直接發給 admin —— 請改用 send_to_instance
+    發給 leader-agent（你的 leader）由其轉呈，或用 log_to_leader 私下回報」
+```
+
+| src role | 可發給 |
+|---|---|
+| admin | 任何人 |
+| **manager** | **只能** admin / manager / leader |
+| worker | leader 永遠可以；worker↔worker 看 p2p；**admin 403** |
+
+> 問題單描述的死鎖（manager 派給 admin → 跟著卡死）成立，但那條路徑是
+> **刻意允許**的 —— manager 是私訊入口，需要能把維運請求轉給 admin。
+> 死鎖的正解是 hang 偵測 + 逾時（已有），不是移除合法的通訊路徑。
+
+### 但查證挖到一個真缺陷
+
+```python
+allowed_targets = []   # workers can only reply, no send targets     ← 註解
+allowed_targets = []   # Private manager: only sees itself           ← 註解
+                       ↓
+if not _allowed_targets:
+    return None        # no restriction                              ← 實際
+```
+
+`None` 與 `[]` 都走「無限制」，於是 daemon 想表達「不能發給任何人」時
+**得到的是相反的效果**。實測 5 個 agent 的 `mcp.json`：只有 leader 有
+`--allowed-targets`（`backend.py` 的 `if cfg.allowed_targets:` 對空 list
+是 falsy → 不傳）。
+
+**兩層防護裡有一層是假的，而註解讓讀的人以為它在保護。**
+
+### 修法：三種狀態分開
+
+| 值 | 意思 |
+|---|---|
+| `None` | 無限制 |
+| `[]` | **不得發給任何人** |
+| `[...]` | 只能發給清單內的 |
+
+⚠️ **不改「部署」的行為**：原本傳 `[]`（實際＝無限制）的地方改傳 `None`（無限制），
+效果完全相同。`[]` 從此保留給「全禁」，目前無人使用。
+
+> 🔴 **但「模組預設值」變了，而測試依賴它** —— 實測 9 個測試紅：
+> 8 個用 `_allowed_targets = []` 表達「無限制」（其中一個還在 `teardown_method`
+> 裡設，污染了後續測試），1 個斷言 `KiroBackendConfig.allowed_targets == []`。
+> 全部改成 `None`，並在 `TestCheckTarget` 補一條專測 `[] = 全禁`。
+>
+> 💡 **宣稱「不改行為」時要說清楚是誰的行為** ——
+> 部署的、API 的、還是模組預設的。這三者不同，
+> 而測試通常釘的是最後一種。
+
+同步四處：`team_mcp`（判斷 + argparse default + `tools/list` 過濾）、
+`backend`（型別 + **`is not None` 而非 truthy** —— truthy 會把「全禁」的
+空 list 當成沒設定而漏傳）、`daemon`、`cli`（第二份實作）。
+
+### 守門
+
+10 條，其中一組專門證明**行為沒變**（daemon 不得傳 `[]`、cli 與 daemon 一致、
+backend 用 `is not None`）。反證 5 項各紅 1 條，包含一條釘住
+「真正在擋的是 `/api/send`」—— 若日後有人拿掉那段，這條會紅，
+而那時 team_mcp 這層（設成無限制）擋不住任何東西。
+
+實機驗證行為不變：worker→admin 仍 403、worker→leader 仍通、
+`mcp.json` 與 1.7.10 一模一樣。
+
 ## 1.7.10 (2026-09-04)
 
 ### 🔴 headless 部署的 reply 從 1.7.0 起每天落空 —— 而症狀是「看不見」不是報錯
