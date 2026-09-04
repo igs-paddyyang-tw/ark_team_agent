@@ -6,6 +6,75 @@
 
 ---
 
+## 1.7.13 (2026-09-04)
+
+### team_mcp 的工具呼叫記錄 —— 18 個工具裡有 14 個原本不可觀測
+
+`team_mcp.py` 在此之前**全檔零個 log 呼叫**。只有 4 個工具的使用看得到
+（`send_to_instance` / `delegate_task` / `reply` / `broadcast_all` ——
+那 4 個是因為走 HTTP 打 daemon，**daemon 側**才有 log）。
+
+實測（從 DB 與檔案反推）：
+
+| 工具 | 7 天使用量 |
+|---|---|
+| reply / send | 655 / 347 次 |
+| wiki_query / wiki_ingest | 有用 |
+| **任務板 4 個** | 🔴 `tasks/items/` **是空的** |
+| **record_spend** | 🔴 `spends` 表 **0 筆**（而 `cost_guard` 設了 $30/day） |
+| **decision_* 2 個** | 🔴 三個表全 **0 筆** |
+
+> 🔴 而「0 筆」**分不出「沒被呼叫」與「呼叫了但失敗」** ——
+> 前者要改 description（agent 不知道要用），後者要改實作。
+> **兩種修法完全相反，而現在無從判斷。**
+
+### 🔴 為什麼寫檔案而不是 stdout / stderr
+
+`team_mcp` 是 MCP server，協議走 **stdin/stdout 的 JSON-RPC**：
+
+- **stdout** → 印任何東西都**破壞協議**
+- **stderr** → 這進程是 kiro-cli 起的子進程，stderr 會混進 kiro-cli 的輸出
+  → 進 agent 的 stdout → 被 daemon 的 reader 讀到 → **污染 agent 的回覆**
+  （`process.py` 是 `stderr: STDOUT`，那條路是通的）
+
+落點 `state/tool_calls.log`，並設 `log.propagate = False`
+（root logger 可能有 StreamHandler）。守門禁止 `print()` 與 `StreamHandler`。
+
+### 三個實作決定
+
+| 決定 | 理由 |
+|---|---|
+| 包一層 `_handle_tool` → `_handle_tool_inner` | 內層 18 個分支各自 `return`，逐一加 log 等於 18 個會漏改的地方 |
+| **不記參數** | 工具參數可能含 token／密鑰（本專案記過 `memory/daily` 的問題）。只記 `{instance} {tool} {✓\|✗} {耗時}` |
+| 失敗前綴用 **`ast` 掃出來** | 第一版手工列漏了「未知工具」→ 實測 `no_such_tool` 被記成 ✓ |
+
+守門 13 條，反證 5 項各紅 1 條。
+
+### 🔴 而一條舊守門救了我一次
+
+`test_changelog_is_not_auto_synced` 釘住「CHANGELOG 刻意不自動同步」，
+理由有兩個：**兩個 repo 的標題格式不同**、**整份覆蓋的風險實測過**。
+
+我 1.7.12 把同步自動化時只處理了第二個。第一個比它說的更嚴重：
+
+| 套件 | 本機 CHANGELOG | 格式 |
+|---|---|---|
+| `ark_team_agent` | `CHANGELOG.md` | `## 1.7.12 (2026-09-04)` |
+| `ark_bot_agent` | **`packages/ark-bot-agent/CHANGELOG.md`** | `## [1.0.10] — date · 標題` |
+
+**位置與格式都不同**，而我只讀 `ROOT / "CHANGELOG.md"` →
+發 `ark_bot_agent` 時會去錯的檔案找版號 → **靜默跳過、永遠不同步**。
+
+修法：`_local_changelog_path(spec)` 依套件取檔案、
+版號正則同時吃 `## 1.2.3 (` 與 `## [1.2.3]`。實測兩個套件都取得到。
+
+那條守門**不刪**，改成驗「那兩件事都處理了」——
+它的理由沒過時，只是結論從「不該自動化」變成「自動化必須處理這兩件事」。
+
+> 💡 **舊守門變紅時，先讀它的理由再決定是「它過時了」還是「我漏了它警告的事」。**
+> 今天早上才記過「守門保證行為沒變，不保證行為對」——
+> 這次是反面：**守門保住了我沒想到的事。**
+
 ## 1.7.12 (2026-09-04)
 
 ### 進度列孤兒收尾 —— 收尾點原本綁在兩個不保證發生的事件上
