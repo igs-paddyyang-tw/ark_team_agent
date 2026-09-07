@@ -6,6 +6,101 @@
 
 ---
 
+## 1.7.14 (2026-09-07)
+
+### `log_to_leader` 的兩個出口缺陷 —— 都是 1.7.13 的工具記錄抓到的
+
+1.7.13 開始把工具呼叫寫進 `state/tool_calls.log`。**24 小時、五個部署、
+459 次呼叫**，只有一個工具有真實失敗：
+
+```
+ 22  log_to_leader   ✓14  ✗8      ← 36% 失敗率
+```
+
+而**耗時把 8 次失敗分成兩群**，那個分群直接指出兩個獨立的根因：
+
+| 部署 | 次數 | 耗時 | 根因 |
+|---|---:|---|---|
+| paddy | 5 | **3.51~3.60s** | 缺陷 A（503 → `_api` 重試 3 次，backoff **0.5+1+2 = 3.5s**）|
+| ninja | 2 | 0.02~0.15s | 缺陷 B（4xx 立刻回，不重試）|
+
+> 💡 **耗時是免費的分類器。** 同一個工具、同一個 ✗，
+> 靠 3.5s vs 0.05s 就分出兩個獨立缺陷 —— 比逐筆讀 log 快得多。
+
+#### 🔴 缺陷 A：headless 的 `log_to_leader` 沒有 log 出口
+
+1.7.10 修 `reply()` 時數過「一共有五個出口」，**卻只修了那一個**。
+`/api/log` 仍是 `raise HTTPException(503)`，而 503 是 5xx →
+每次呼叫白等 3.5 秒，訊息照樣丟失。
+
+> 🔴 判準：**數清楚出口之後，要逐一確認每個都處理了。**
+> 「知道有幾個」不等於「每個都做了」，而前者會讓人以為自己涵蓋完整。
+
+而本版加的涵蓋性守門（`ast` 掃所有檢查 `self.tg` 的函式）
+**第一次跑就抓到「五個」也是錯的 —— 實際有七個**。
+多出來的兩個本身無害（純 UI 標記、已正確降級），但它們證明了
+**與其相信自己數過，不如讓機器數**。
+
+#### 🔴 缺陷 B：1.3.1 的 private fallback 從來沒有被執行過
+
+```python
+topic_id = self._topic_map.get(leader_name)
+if not topic_id:
+    raise HTTPException(404, "leader has no topic")   # ← 先擋掉
+...
+if not sent:
+    # Fallback: leader private_chat → owner → 任一        ← 永遠走不到
+```
+
+1.3.1 加這段 fallback 正是為了「`group_id=0` 的純私訊部署」，
+而那個 404 排在它前面 → **純私訊部署的 `log_to_leader` 100% 失敗**。
+實測 ninja-team-agent（`team.yaml` 明寫「純私訊模式：無 group_id / topics」）
+2 次呼叫 2 次失敗。
+
+> 🔴 與「有呼叫點，只是那次的資料讓它提前 return」同族，但更徹底：
+> **修法加在了永遠到不了的位置。**
+> 判準：**加 fallback 時往上看它前面有沒有提前 return / raise。**
+>
+> 守門用 `ast` 釘住「fallback 之前不得有 raise」，並區分兩類：
+> **「前提不存在」可以 raise**（`no telegram adapter`／`no leader found`
+> —— fallback 也需要那些前提），**「資料不符」不行**
+> （沒有 topic 不代表沒有 private_chat，那正是 fallback 存在的理由）。
+
+#### 缺陷 C（順帶）：送不到卻回 `ok: True`
+
+原本沒有任何通道時只 `log.warning` 然後回 `{"ok": True, "delivered": False}`，
+而 `team_mcp` 判成功**只看 `ok`** → 完全沒送到卻被記成 ✓。
+
+### 順帶：`reply-photo` / `reply-file` 的錯誤訊息
+
+headless 下送不了檔案是事實（log 塞不下二進位），但訊息說
+`no telegram adapter` 會讓人去查 TG 連線 —— 白費工。改成說清楚是
+「這個部署沒有 TG」。**只改訊息，零行為變更。**
+
+### 順帶：`check_knowledge_layout` 對 `memory-archive` 加豁免
+
+09-06 是 paddy-bot 第一次真的執行 MEMORY 歸檔，於是
+`knowledge/raw/memory-archive/` 出現 —— 而 08-19 的守門判它錯層。
+
+**兩邊都不能讓步**：那個位置是套件寫死的
+（`memory_archive.py` + `scheduler.py:586`，`paths.py:164` 註解明寫「不可搬」），
+搬走會讓下次歸檔再寫回來 → 歸檔分岔成兩個地方。
+
+處置是**顯式豁免 + 三條測試釘住**：不得變成後門（同目錄其他檔案照樣抓）、
+不得誤中近似名（`memory-archives`）、**豁免理由必須在套件裡真的成立**
+（套件改了落點就會紅，逼人回來重新決定）。
+
+> 💡 守門與既有機制衝突時，不能放著每次都紅 ——
+> **常駐假警報的代價不是雜訊，是維運開始習慣性忽略該檢查。**
+
+### 驗收
+
+`tests/test_log_to_leader_channels.py` **21 條**（靜態 14 + 行為 7），
+`test_knowledge_layout.py` **+5**。
+**反證 10 項全部有紅**（headless 分支移除／404 加回／`ok:True` 恆真／
+豁免證據破壞／新增未處理的出口／`if _group_id` 少一個條件／
+`_is_exempt` 恆真／子字串比對……）。全量 **2676 passed**。
+
 ## 1.7.13 (2026-09-04)
 
 ### team_mcp 的工具呼叫記錄 —— 18 個工具裡有 14 個原本不可觀測
