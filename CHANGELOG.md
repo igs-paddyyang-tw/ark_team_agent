@@ -6,6 +6,64 @@
 
 ---
 
+## 1.7.20 (2026-09-07)
+
+### 🔴 啟動橫幅送不出去 —— 14 天，而它是 1.7.19 加 log 之後第一秒被看見的
+
+1.7.19 把送訊息的靜默 `except` 都補上 log。重啟四個部署，log 立刻說：
+
+```
+📢 啟動橫幅送 group topic 1 失敗：name 'self' is not defined
+📢 啟動橫幅送 private 937896656 失敗：name 'self' is not defined
+🔄 重啟通知 → group topic 1          ← 這個是成功的
+🔄 重啟通知 → private 937896656      ← 1.7.17 的修法確認有效
+```
+
+根因：1.6.0（2026-08-24）在 `run_team` 的兩個嵌套函式裡寫了
+
+```python
+_vi = getattr(self, "_version_info", None)
+```
+
+而 **`run_team(config_path)` 不是 method，沒有 `self`** →
+執行到那一行就 `NameError`。`_version_info` 設在
+`TeamManager.start()` 上，這個 scope 要透過 `manager` 讀。
+
+後果不只是「少一行版本提示」—— 那行在 `_startup_msg()` 裡，
+**整則啟動橫幅組不出來**，group 與 private 兩條出口一起掛。
+1.6.0 的另一個功能（新版更新卡片）也在同一個錯上，**兩個都從沒運作過**。
+
+> 🔴 **兩個缺陷疊在一起才是 14 天不可見的原因**：
+> ① 巢狀函式引用外層不存在的名字，**只在執行到那一行時才炸**
+> ② 而那一行被 `except: pass` 包著
+>
+> 💡 這是加可觀測性的最好證明：**1.7.19 沒有修任何功能，
+> 但它讓一個 14 天的隱形缺陷在重啟後第一秒現形。**
+
+### 守門
+
+| 條 | 釘住什麼 |
+|---|---|
+| `test_run_team_has_no_self` | `run_team` 裡不得出現 `self`（先斷言它真的沒有 `self` 參數） |
+| `test_version_info_reads_the_manager` | 兩處都要讀 `manager` |
+| `test_no_module_level_function_uses_self` | **一般化**：`team.py` 的模組層函式都不得用 `self` —— 擋的是下一次「從 method 複製一段貼到模組層函式」 |
+
+另外用 ast 掃過 `run_team` 全部嵌套函式的自由變數，
+確認 `self` 是唯一一個在外層找不到的名字（另一個命中是
+`except … as e` 的綁定，掃描器的誤報）。
+
+### 💡 順帶記一個同型的觀察（未處置）
+
+`_send_summary`（每日摘要）的守門條件是
+`if summary_topic and config.channel.group_id:` ——
+**純私訊部署（`group_id=0`）不會起每日摘要**。
+與 1.7.17 修的重啟通知同型，但「摘要要不要送私訊」是產品決定，不在本版。
+
+### 驗收
+
+全量 **2720 passed**，反證 1 項紅 3 條。實機四個部署重啟後 log 從
+「失敗：name 'self' is not defined」變成「📢 啟動橫幅 → …」。
+
 ## 1.7.19 (2026-09-07)
 
 ### 🔴 送訊息的 `except` 靜默 —— 於是 1.7.17 的修法無從驗證
