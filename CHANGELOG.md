@@ -6,6 +6,107 @@
 
 ---
 
+## 1.7.17 (2026-09-07)
+
+### 🔴 重啟通知在純私訊部署（`group_id=0`）從來收不到 —— 只有 group 出口
+
+`team.py` 的重啟通知（「🔄 AI Team 重啟完成」）唯一出口是
+`_send_to_topic(general_tid, ...)`，而它的守門條件是：
+
+```python
+if (is_restart and config.channel.group_id and tg_adapter
+        and config.notifications.startup_to_group):
+```
+
+`config.channel.group_id` 對**純私訊部署是 `0`（falsy）→ 整段跳過**，
+重啟通知從來沒送出過。而它的雙胞胎啟動橫幅（team.py §1/§2）早就是
+「group 送 topic、private 送 owner」兩條並行 —— **只有重啟通知漏了 private 那條。**
+
+> 🔴 同型於本套件記過的「fallback 加在永遠到不了的位置」：
+> 修法要加在**兩條出口並行**，而不是在單一 topic 出口上打補丁。
+
+**修法**：沿用啟動橫幅與 `notify_recovery` 的既有寫法，改成兩條並行：
+
+| 出口 | 條件 | 定址 |
+|---|---|---|
+| group | `group_id and startup_to_group` | `general_topic_id` → `_send_to_topic` |
+| **private（新增）** | `startup_to_private` | `_owner_chat_id()` → `_send_to_private` |
+
+純私訊部署（`startup` 預設 `both` → `startup_to_private=True`）因此收得到。
+既有 group 部署行為不變（兩條都走，與啟動橫幅一致）。
+
+**守門**：`test_startup_notification.py` 三條原本用 `src.count()` / 字元窗口
+判斷程式結構 —— 本次修法的註解同時提到 `startup_to_group` / `startup_to_private`
+會讓純字串失準，全部改用 `ast`：
+
+- `test_all_four_send_sites_are_gated`：`ast` 數屬性存取節點（group 2、private 2）
+- `test_restart_notice_has_private_fallback`（新增）：定位含橫幅的 `If` 節點，
+  斷言其 body 同時有 `_send_to_topic` 與 `_send_to_private`
+- `test_restart_notice_shares_the_switch`：改 `ast` 驗開關存取
+
+**反證**：退回舊行為（移除 private 分支）→ 三條全紅
+（`startup_to_private` 存取數 1、重啟段無 `_send_to_private`、無 `startup_to_private` attr）；
+現行碼全綠。全量 2705 passed / 1 skipped，`check_hardcoded_names` exit 0。
+
+---
+
+> 以下為同版第二批（另一個 session 修完重啟通知之後，我在同一個工作區做的）。
+> **兩批互不相干**：上面那批動 `team.py` 的通知出口，這批動任務板與測試衛生。
+
+### 🔴 `delete_task` 不刪 item 檔 —— 孤兒 markdown 會累積
+
+`delete_task`（1.2.9 起）只移除 JSON entry，**留下 `tasks/items/*.md`**。
+`list_tasks()` 看不到它們，而它們看起來像真的任務。
+
+實測 paddy：刪掉 6 個任務後 `items/` 還剩 2 個孤兒檔。
+而 1.7.15 讓 `delegate_task` 也建任務之後，累積會更快。
+
+刪不掉檔案時**不讓刪任務失敗，但要 log** —— 否則孤兒檔又變成靜默累積。
+
+### 🔴 兩條既有測試開始寫進真實的 `tasks/`
+
+1.7.15 讓 `delegate_task` 有了副作用（建任務），於是
+`test_team_mcp.py` 與 `test_team_mcp_extended.py` 這兩條**原本無害**的測試
+開始寫進真實的任務板 —— 實測今天累積了 **5 個 `do stuff` 假任務**。
+
+> 🔴 那不只是髒 —— **agent 會把它們當成真的待辦**，
+> 而 `list_tasks` 每天被呼叫 48 次。
+>
+> 💡 判準：**讓一個函式開始有副作用時，要回頭看誰在測它。**
+> 原本無害的測試會在那一刻變成資料污染源。
+
+守門用 `ast` 找真的 `_handle_tool("delegate_task", …)` 呼叫，
+要求那些測試必須 patch `get_home`。
+
+#### ⚠️ 這條守門我寫錯了三次，每次都是反證抓到的
+
+| 版 | 判斷方式 | 為什麼是空的 |
+|:-:|---|---|
+| 1 | 簽名有 `tmp_path` + `monkeypatch` | **「有參數」不等於「用了它」** —— 拿掉 patch 留著參數 → 0 紅 |
+| 2 | `"get_home" in seg` | **被自己的 docstring 騙** —— 那段 docstring 就在講 `get_home` |
+| 3 | `'_handle_tool("delegate_task"' in seg` | **把守門自己抓了進去** —— 它的判斷字串就長那樣 |
+
+三個都是本專案記過最多次的病，而它們**在同一條測試上依序出現**。
+最後全改 `ast`（找 Call 節點 + 檢查引數字面值）才擋得住。
+
+> 🔴 **反證的價值在這裡最明顯**：三次都是綠的，三次都沒在守任何東西。
+
+### 行尾守門：`write_text()` 把 CRLF 正規化（第四次）
+
+改 `task_board.py` 時 17 行的實質變更顯示成 **467+/450-**。
+本專案已記過三次（`watchdog.py`／hoyeah 的 `team.yaml`／`authority-matrix.yml`），
+這是第四次。
+
+`src/` 有 **28 個 CRLF 的 `.py`**（全 repo 183 個追蹤檔）。
+**刻意不加 `.gitattributes`** —— `*.py text eol=lf` 會讓 183 個檔案同時變更，
+那是獨立的一次工程，且會撞掉別人正在飛的變更。
+
+改為守門：`tests/test_line_endings_preserved.py` 比對「已修改檔案」的行尾
+與 HEAD 是否一致。乾淨工作區上零成本，而**靜默正規化立刻變紅**。
+
+> 💡 與其約定「改檔案前先看行尾」，不如讓違反它的人立刻看到紅燈 ——
+> 規則寫在文件裡而沒有守門，等於沒有規則。
+
 ## 1.7.16 (2026-09-07)
 
 ### 🟠 TEAM.md 的工具表把 description 截在字中間 —— 1.7.15 引入
