@@ -6,6 +6,111 @@
 
 ---
 
+## 1.7.15 (2026-09-07)
+
+### 🔴 每則 agent 間訊息被投遞兩次 —— 18 天，而 agent 一直在回報
+
+1.5.0（2026-08-20）加 TTL 分支時，**沒刪掉它前面那行無條件的投遞**：
+
+```python
+ok = await self.daemon.send_message(instance, message, source="peer")   # ← 忘了刪
+if hasattr(req, 'ttl_minutes') and req.ttl_minutes > 0:
+    ok = await self.daemon.send_message(..., ttl_minutes=...)
+else:
+    ok = await self.daemon.send_message(...)
+```
+
+**而 agent 一直在正確地回報這件事：**
+
+```
+21:30:32 data-agent 「此為 21 秒前同一請求的重複觸發，結論不變」
+08:02:39 data-agent 「此為 34 秒前同一裁示的重複，已收到並處理」
+21:30:29 coder-agent「同上：09-06 無新素材，剛已確認過，不重複沉澱」
+```
+
+> 🔴 **為什麼 18 天沒被當成 bug**：症狀落在 **agent 的自然語言回覆裡**，
+> 不在任何指標上。degraded 空、health 全綠，連 `📤 SEND` 都只印一次
+> （那行在投遞之後，送幾次都只印一次）。
+>
+> 💡 判準：**agent 說「這是重複的」時，那是缺陷報告不是客套。**
+
+守門：`/api/send` 的兩條 TTL 路徑各驗「恰好投遞一次」+ `ast` 斷言
+handler 裡的 `send_message` await **恰好 2 個**（if/else 各一，新增第三個立刻紅）。
+
+### 🔴 admin 能發給任何人，卻收不到回覆
+
+role 路由禁止 worker → admin（為了擋「主動發起」），而 **admin 可以直接派工給 worker**
+→ 實測 aiops：worker 想回報得到 403，只能繞道 `log_to_leader` 回給 leader，
+**而那不是指派它的人**。
+
+> 💡 這個不對稱本身就是訊號：同一條溝通路徑，一個方向暢通、反向完全封死。
+
+修法刻意是**「回覆」而不是「放寬」**：新增 `Daemon._inbound_wait`
+（`target → {sender: 到期時間}`），只有「對方最近發過訊息給我」才放行，
+**worker 主動發起給 admin 仍然 403**。
+
+三個實作決定：
+
+| 決定 | 為什麼 |
+|---|---|
+| **不重用 `_pending_reply`** | 它只保留最近一筆（原始碼註明的已知限制），且它是 hang 偵測在讀的 —— 1.7.5 的誤判事故就發生在那條路上 |
+| 記錄放在 `peer_reply_timeout_minutes` **早退之前** | 那個設定的語意是「停用逾時 nudge」，與能不能回覆無關。放在早退之後會讓一個設定意外關掉另一個功能 |
+| TTL **4 小時**（> hang 的 90 分） | 太短的症狀是「做久一點的任務就回報不了」，而那**不會有錯誤訊息** —— 只會看到一個 403，跟從沒被派過工長得一模一樣 |
+
+⚠️ 附帶釘住一個**不可達**的事實：`else` 分支同時涵蓋 admin 與 manager，
+而 manager 那半邊永遠不會被走到（manager 的規則是「只能發給 admin/manager/leader」
+→ 它不能先問 worker → 記錄不可能存在）。
+**第一版我寫了「worker 也該回得了 manager」並讓它紅了 —— 前提不成立，不是實作有缺。**
+
+### 🔴 `delegate_task` 完全不碰任務板
+
+24 小時實測（1.7.13 的工具記錄）：
+
+| | 次數 |
+|---|---:|
+| `list_tasks`（讀） | **48** |
+| `create_task`／`update_task`／`get_task`（寫） | **各 0** |
+
+**agent 一直在看一個沒有人寫的任務板。** 而 5 次 `delegate_task`
+全部來自 leader（`ic-agent`×3、`conductor-agent`×2）——
+**正是該用 `create_task` 的角色，選了名字更直白卻不留痕的那個。**
+
+兩個工具的 description 都說「派工」，只有一個留痕。
+
+> 💡 **那不是 agent 選錯，是設計逼它選錯。**
+> 所以修法不是改 description 教它選（**規則只存在於自然語言等於沒有規則**），
+> 而是讓「派工」與「留痕」不可分離。
+
+`delegate_task` 現在會：建任務 → 把任務編號放進訊息（教對方用 `update_task` 回報）
+→ 回傳值帶編號。三個邊界：
+
+- **權限不繞過** —— 依 `tools_for_role` 判斷（不硬編 role 名）：
+  manager 有 `delegate_task` 但沒有 `create_task`，所以 manager 派工仍不建任務
+- **建任務失敗不擋派工**，但**必須明講** —— 靜默吞掉會變成「以為留痕了其實沒有」
+- **title 截斷不遺失內容** —— 首行當 title，全文進任務檔的「## 需求」
+
+兩個 description 也改成說出真相（`create_task` 現在明說它**不發訊息**通知對方）。
+
+### 順帶：測試 fixture 的 MagicMock 會讓新判斷恆真
+
+`tests/test_api_endpoints.py` 的 `api` fixture 沒設
+`is_awaiting_inbound_reply` → MagicMock 回 truthy →
+`test_worker_cannot_send_to_manager` 這類權限測試全部失效。
+
+> 🔴 同一個錯今天出現兩次（另一次是 `tg._owner_chat_id`）。
+> **測試蓋掉的東西，就是它驗不到的東西** —— 而 MagicMock 蓋掉的是「否」那一半。
+
+### 驗收
+
+`tests/test_dispatch_and_reply_rights.py` **21 條**，
+**反證 7 項全部有紅**（重複投遞 3 紅／移除回覆權 2 紅／記錄移到早退後 1 紅／
+權限判斷恆真 1 紅／不建任務 3 紅／`_inbound_wait` 改單筆 1 紅）。全量 **2701 passed**。
+
+> ⚠️ 反證第一版有一項是 **0 紅** —— `_inbound_wait` 改單筆時我的測試場景
+> （admin 連派 w1／w2）在兩種結構下都會通過。真正會被覆蓋的是
+> 「**同一個** worker 被兩個人找過」。
+> 本專案記過「驗新判準時測試資料要讓舊判準失效」，這是同一族的錯。
+
 ## 1.7.14 (2026-09-07)
 
 ### `log_to_leader` 的兩個出口缺陷 —— 都是 1.7.13 的工具記錄抓到的
