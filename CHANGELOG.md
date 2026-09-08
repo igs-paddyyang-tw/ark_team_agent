@@ -6,6 +6,50 @@
 
 ---
 
+## 1.7.23 (2026-09-08)
+
+### 🔴 移除 fetch MCP 的預設自動注入 —— kiro-cli 內建 web_fetch，冗餘且壞
+
+`backend.py` 原本對 `role in (worker/leader/admin)` **無條件硬編注入**
+`mcp-server-fetch`：
+
+```python
+elif cfg.role in ("worker", "leader", "admin"):
+    servers["fetch"] = {"command": venv_fetch 或 uvx, "args": [...]}
+```
+
+問題有兩層：
+
+1. **冗餘** —— kiro-cli 本身內建 `web_fetch` / `web_search`，這個 MCP server 是多的。
+2. **壞的** —— uvx 的 `mcp-server-fetch` 因上游 `McpError`→`MCPError` 改名 +
+   SDK 版本歪斜而起不來，要 `--with 'mcp<1.15'` 釘版本才行。
+
+而「沒宣告也沒 disable」的部署每個 agent 各起一個冗餘進程：
+實測 **fish 14 個 agent = 14 個 mcp-server-fetch**、slot 13 個。
+nana / aiops / director / game 早在 2026-08-21 就手動移除，只有 fish / slot 漏清。
+
+**改為 opt-in**：移除 role-based 硬編注入分支。想要 fetch 的部署在
+`team.yaml` 顯式宣告 `mcp_servers.fetch`（還能順便釘住 SDK 版本修好壞的問題）。
+
+保留兩件事確保相容：
+
+| 保留 | 理由 |
+|---|---|
+| `_BUILTIN_MCP = {"fetch", "team"}` 白名單 | 讓既有部署的 `mcp_disabled: [fetch]` / `mcp_exclude: [fetch]` 升級後仍合法，不報「引用未宣告的 server」 |
+| `else: servers.pop("fetch")` | 主動清掉既有 mcp.json 裡殘留的舊硬編 fetch（取代原本的注入） |
+
+**顯式宣告路徑完全不變**（`elif "fetch" in cfg.mcp_servers` 分支保留）——
+nana 等宣告了自己修好的 fetch 的部署不受影響。
+
+**守門**：`test_fetch_present_by_default` 反轉為 `test_fetch_not_injected_by_default`
+（行為變更：預設不再注入）+ 新增 `test_fetch_injected_when_declared`（opt-in 仍可用）。
+反證：加回 role-based 注入 → 守門紅；還原 → 綠。
+既有五條顯式宣告測試（`test_mcp_declared_fetch.py`）與 prune 豁免測試全部不變仍過。
+全量 2834 passed / 28 skipped，`check_hardcoded_names` exit 0。
+
+> ⚠️ **行為變更**：依賴內建 fetch 預設又沒宣告的部署，升級後不再有 fetch。
+> 若真的需要網頁擷取 MCP（非 kiro-cli 內建 web_fetch），在 `team.yaml` 宣告即可。
+
 ## 1.7.22 (2026-09-08)
 
 ### 🔴 preflight 前移到 TG 之前 —— 「零紅」與「沒跑」長得一模一樣
