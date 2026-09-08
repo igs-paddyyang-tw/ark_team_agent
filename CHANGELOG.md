@@ -6,6 +6,99 @@
 
 ---
 
+## 1.7.21 (2026-09-08)
+
+### U1：preflight 探針 —— 讓「health 全綠但不能用」浮上來
+
+daemon 看得到「agent 掛了」，看不到「**agent 起來了但人格沒載入**」。
+三個實際踩過的病例，當時 health 都是全綠：
+
+| 日期 | 病例 |
+|---|---|
+| 08-26 | hoyeah `mcp_json: once` → 9 個 agent 的 mcp.json 凍結成 `{}`，leader 沒有 `send_to_instance`（**它不是判斷失誤，是沒得選**）|
+| 08-31 | aiops 8 個 agent.json 帶 **BOM** → kiro-cli 印一行 Error 然後照常跑，人格退回 `kiro_default` |
+| 08-31 | `file://` 少兩層 → 同上 |
+
+三個探針（全 P0、deterministic、零 LLM、唯讀）：
+`agent_json_paths`（BOM + 所有 `file://` 解析後存在）·
+`mcp_json`（有 `team` server 且 `--instance` == 目錄名）·
+`mcp_roundtrip`（被動版，見下）。
+
+結果接到 **`degraded`** —— 「一個檢查的價值 = 偵測正確性 × 被看見的機率」，
+而 `degraded` 是唯一每天被看的欄位。
+
+### 🔴 Gate 改成「先寫 failing test」
+
+設計文件原本把病例回放放在**做完後**驗。本版先寫 5 條測試讓它們全紅，
+才開始實作 —— **「做完才驗」只能證明「現在是綠的」，
+「先證明抓得到」才知道那個探針真的會對那個病例變紅。**
+
+實機回放（對真實 agent 塞 BOM → 重啟）：
+
+```
+degraded = [
+  "headless_no_reply_channel:4 jobs(...)",        ← 既有標籤沒被誤清
+  "preflight_failed:agent_json_paths:qa-agent"    ← 病例被抓到
+]
+detail = "qa-agent.json: 檔頭有 BOM（kiro-cli 的 JSON parser 不吃）"
+```
+
+移除 BOM 後重啟 → 標籤消失（**自癒**），headless 標籤保留。
+
+### 🔴 `mcp_roundtrip` 改被動版
+
+原案是「daemon 以該 instance 身分呼叫一次 MCP」。改用
+`state/tool_calls.log`（1.7.13）+ `last_inbound`（1.7.5）：
+
+| | 主動 | **被動** |
+|---|---|---|
+| 成本 | 起子進程 × N × 每小時 | **零** |
+| 副作用 | 真的發一次呼叫 | **零**，記的是真實使用 |
+
+**判準必須是「有 inbound ∧ 零呼叫」** —— 只看「零呼叫」會把從沒被派工的
+agent 全判紅，那正是 **1.7.5 誤判事故的形狀**。
+
+⚠️ 重啟後 `last_inbound` 歸零 → 回「不判定」而非紅。
+所以兩個時機分工不同：**啟動那次跑靜態探針、每小時那次才有被動探針的資訊。**
+
+### 砍掉的探針（實測理由）
+
+| 探針 | 為什麼不做 |
+|---|---|
+| `team_md_sync` / `tools_table` | 五個部署 `team_md=always`（每次啟動由產生器重寫）→ **恆綠**。只在未來的 `managed` policy 下有意義 |
+| `knowledge_paths` | 與知識庫引擎收斂（U2）同源 |
+| `capabilities` | 依賴 capability manifest（尚不存在）|
+
+> 💡 **判準：探針該不該做，看被探的那個檔案由誰重寫、多久一次。**
+> `always` → 產生器已保證；`once` → 它凍結**且升級修不好** ——
+> 而 `agent_json` 正是 `once`，那就是 BOM 能存活的原因。
+
+### 三個設計細節（都有來歷）
+
+- **指紋不含 `detail`** —— 路徑訊息變一個字元就算「有變化」→
+  每次執行都通報一次沒有新資訊的東西（沿用 `context_audit` 的判準）
+- **degraded 先移除舊 `preflight_failed:` 再加新的** ——
+  沒有這步，修好的問題會永遠掛著，而常駐假警報會讓維運忽略整個欄位
+- **探針絕不拋例外**，且「探針自己壞掉」與「被探的東西壞掉」的
+  detail 分得出來（前者是 `探針執行失敗：...`）
+
+### ⚠️ 過程中一條守門是空的（反證抓到）
+
+第一版的 BOM 斷言寫 `"BOM" in detail` —— 而 `json.loads` 對 BOM 的錯誤訊息
+**本身就含 "BOM"**（`Unexpected UTF-8 BOM (decode using utf-8-sig)`）→
+移除專門的 BOM 檢查後那條測試**仍然綠**。
+
+> 🔴 收緊成「必須有 `檔頭有 BOM`，且不得退化成通用的 JSON 解析錯誤」。
+> 理由不只是守門有效性：**BOM 的修法是「刪 3 bytes」，
+> 與 JSON 語法錯的修法完全不同 —— detail 要能直接指向修法。**
+
+### 驗收
+
+`tests/test_preflight_probes.py` **24 條**（M0 病例回放 5 · 被動探針 5 ·
+探針隔離 6 · scheduler 接線 6 · 啟動掛鉤 2），
+**反證 6 項全部有紅**。全量 **2793 passed**。
+實機：21 個探針（7 agents × 3）、病例回放 + 自癒都驗過。
+
 ## 1.7.20 (2026-09-07)
 
 ### 🔴 啟動橫幅送不出去 —— 14 天，而它是 1.7.19 加 log 之後第一秒被看見的
