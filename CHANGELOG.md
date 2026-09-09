@@ -6,6 +6,30 @@
 
 ---
 
+## 1.7.29 (2026-09-09)
+
+### 🚀 新增 /publish 發布上線機制 —— 與 ark_bot_agent 同一套 git 護欄
+
+team 新增 TG cmd `/publish`（`_check_access` + 私聊限定 + Inline Button 確認）：
+確認後**直接發布當下的 MEMORY.md / README.md 變更**（commit + pull + push）。
+
+🔴 **與 bot 版的架構差異**：bot 的 `/publish` 用 `agent_cli_chat` **同步等** admin
+寫完內容再發；team 的 `daemon.send_message` 是**投遞不等待**（agent 產出走非同步
+polling），無法同步等 admin 寫完。所以 team 版**不派 admin 寫內容、直接發布當下變更**
+—— team 的 agent 在任務過程中本就會更新 MEMORY，要先整理內容就先跟 admin 對話再按。
+
+`publish_repo()` 六步護欄**與 `ark_bot_agent.publish` 逐字相同**（兩套件獨立各一份）：
+1. validate（白名單只 MEMORY/README + 機密樣式 + 路徑逃逸）
+2. diff（逐檔比 HEAD，剔無變更）
+3. add（只精確路徑，**程式碼不組 `-A`/`.`/`-u`**）
+4. commit（帶 pathspec，不夾帶 index 其他 staged）
+5. pull（fetch 後「遠端要動的檔 ∩ 本地未提交的檔」，交集非空 → blocked）
+6. push（merge-base 零誤刪檢查）
+
+**守門** `tests/test_publish_team.py`（9 條，真實 git repo + bare remote）在 team 側
+再驗一次 —— 兩份實作吃同一組測試向量防漂移。反證：移除交集 / 改 `add -A` /
+移除白名單 → 對應守門全紅。全量 2962 passed。
+
 ## 1.7.27 (2026-09-09)
 
 ### MEMORY.md 歸檔：約束是位元組預算，而規則是天數
