@@ -6,6 +6,38 @@
 
 ---
 
+## 1.8.0 (2026-09-10)
+
+### 🔍 新增 kiro-cli session web 監控（session_web 模組）
+
+把 kiro-cli 的 session（工具呼叫、權限審批、token 用量）用 web 即時呈現。
+兩條資料來源正規化成單一 `SessionEvent`：層次 A 只讀 tail `~/.kiro/sessions/cli/*.jsonl`、
+層次 B spawn `kiro-cli acp`（JSON-RPC）。全部 feature flag 閘門，預設關（零回歸）。
+
+🔴 **normalizer 依 P0 實測校正**（kiro-cli 2.14.2 Windows + 2.21.1 Linux，engine v2）：
+- v3 JSONL：PascalCase kind（Prompt/AssistantMessage/ToolResults/Compaction）+ 巢狀 data；
+  工具從 `results.<id>.tool.kind` 的 BuiltIn/Mcp 取名（原骨架讀 snake_case rec.type → 全壞）
+- ACP：認 `session/update` + 私有 `_kiro.dev/session/update` 雙通道；工具真名取
+  `_meta.kiro.toolName`；參數 rawInput/輸出 rawOutput；`_kiro.dev/metadata`→context.usage；
+  未知 `_kiro.dev/*` 忽略不落 error（2.21.1 已比 2.14.2 多 subagent/list_update，版本韌性）
+
+**apps/team-website 加 session 監控頁**（B 方案同源）：頁面 `/app/sessions`（受既有 auth）
++ session API 同源掛 `/api/*`（無 CORS），38333 官網導覽加入口。
+
+模組：`ark_team_agent.session_web`（events/flags/normalizer/store/tailer/acp_adapter/api）。
+jsonschema 為可選相依（僅開發/CI 驗 schema，正式部署不需要）。
+測試 37 passed（normalizer 用真實 39325 事件驗 error=0、fixture 標 kiro 版本、
+tailer 只讀 ast 守門、permission 流程、flag 全關守門）。
+
+設計/規格/計劃：docs/{designs,specs,plans}/kiro-cli-web-*；P0 探勘：docs/issues/kiro-cli-web/。
+
+### ➕ 本 wheel 同時含 1.7.32 的 `create_topic`
+
+1.7.32 bump 完沒發成 Release（版號在 build 期間被推到 1.8.0），
+其內容從同一份 `src/` 打進本 wheel：**`create_topic` MCP 工具
+（限 admin / manager）+ `RESTRICTED_TOOL_ROLES` 機制**。
+細節見下方 1.7.32 段落。
+
 ## 1.7.31 (2026-09-09)
 
 ### team 側沒有「流水的家」→ 每小時的巡檢進了 always-on 注入的檔案
