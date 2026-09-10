@@ -6,6 +6,27 @@
 
 ---
 
+## 1.8.1 (2026-09-10)
+
+### 🗂️ 記憶歸檔移出知識庫 —— 記憶歸記憶、知識歸知識
+
+MEMORY.md 的歷史歸檔原本硬串到 `knowledge/raw/memory-archive/`（混進知識庫素材）。
+🔴 **語意錯置**：`knowledge/raw/` 是知識素材（會被 ingest 成 wiki、被 `wiki_query`
+檢索），記憶歸檔是 MEMORY.md 的歷史沉澱 —— 兩者不該混在同一目錄樹。
+訊號：歸檔器掃 `knowledge/` 時必須 SKIP `memory-archive`（一個機制需要排除自己的
+產物，就是它放錯位置）。
+
+修正：歸檔路徑改 `memory/archive/`（記憶自己的地盤）。既有部署由
+`migrate_legacy_archive()` 在下次 `_builtin:memory-consolidate` 執行時**自動遷移**
+（冪等、零損失：append 合併同名、內容去重、搬完清空舊處），避免分岔。
+指標行同步指向新路徑。
+
+守門 `tests/test_memory_archive.py`（+6 條）：遷移/冪等/同名合併/重跑不重複/
+指標指新路徑；既有 `test_pointer_left_behind` 同步更新。反證：移除 `src.unlink`
+（破壞冪等）→ 守門紅。全量 38 passed。
+
+知識規範：`knowledge/shared/raw/memory-knowledge-architecture-2026-09-10.md`。
+
 ## 1.8.0 (2026-09-10)
 
 ### 🔍 新增 kiro-cli session web 監控（session_web 模組）
