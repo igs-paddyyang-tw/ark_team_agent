@@ -6,6 +6,34 @@
 
 ---
 
+## 1.8.4 (2026-09-11)
+
+### 🧠 雙層記憶治理 + dashboard 前端透明化（one-pager 2026-09-10）
+
+**問題**：套件只有機械層（`memory-consolidate` 日期歸檔），缺語意層 —— docstring
+自己寫「智慧摘要交給 prompt job」卻沒提供，導致每部署自己手寫固化 job。
+另 slot 回報：打 API port 找 dashboard 前端撞 404（不知道前端在 health_port+5000）。
+
+**P1 深層記憶固化範本 job**：`init` 產出 `daily-deep-memory`（8 步：固化反覆出現的
+事實進 steering / 遺忘過時細節 / 🔴 知識庫只記索引不記內容 / 護紅線保護區 /
+≤2000 tokens / commit 通知）。`enabled: false` opt-in —— 它 commit+push 動 MEMORY.md
+是行為變更。與 `_builtin:memory-consolidate` **機械層互補不取代**（機械搬日期、
+語意做固化，固化後脫離日期分節格式，機械層自然不再搬它）。
+
+**P2 `safe_commit_memory()`**：共用 tree 護欄（精確 pathspec、逐檔 diff、push 前
+交集檢查），供 deep-memory job 用，與 `publish_repo()` 同族的 deterministic git。
+
+**P3 `memory_oversized` 告警可行動**：帶「該由哪個 job 處理」（有 deep-memory 指它、
+無則建議加），不只報「超標」。
+
+**P4a dashboard 前端透明化**：`/api/health` 加 `website` 欄位
+（`{port, source: custom/builtin/none, note}`）—— 查 health 就知道前端在哪，
+不必打 API port 撞 404。README 加「Dashboard 前端在哪」段說明 port 分界。
+🔴 只透明化、不產 degraded（零誤報）。
+
+守門 11 條含反證（add -A / 無變更不 commit / 不夾帶 staged / P4a 不碰 degraded）。
+全量 3125+ passed。
+
 ## 1.8.3 (2026-09-11)
 
 ### 🔴 MCP 工具完全沒被追蹤 —— 團隊 agent 最重要的動作全是隱形的
