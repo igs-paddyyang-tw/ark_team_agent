@@ -6,6 +6,61 @@
 
 ---
 
+## 1.8.9 (2026-09-11)
+
+### 🔴 1.8.8 的修法在實機**仍然**切掉檔名 —— kiro 的樣板後綴
+
+1.8.8 上線後照約定再讀一次真實 TG 卡片：
+
+```
+✅ 已完成（1 步驟）
+　🔍 分析 /home/paddyyang/kiro-cli/projects/nana-team-age⋯   ← 還是從左截
+```
+
+真實的 detail 帶 kiro 的樣板後綴：
+
+```
+Reading file: /home/…/AGENTS.md, all lines
+                                ~~~~~~~~~~ 樣板，零資訊
+```
+
+1.8.8 的判準是「**無空白**才當路徑」，而這個後綴帶空白
+→ 被當成指令留頭 → **檔名還是被切掉**。
+
+### 💡 第三次 fixture 與實機不符
+
+| 次 | 版 | fixture 缺了什麼 | 症狀 |
+|:-:|---|---|---|
+| ① | 1.8.4 | spinner 前綴（`⠹ Thinking...`） | MCP 工具一個都沒抓到 |
+| ② | 1.8.7 | 長檔名（用 `sample.txt`） | 測不出截斷方向 |
+| ③ | **1.8.9** | **樣板後綴（`, all lines`）** | 檔名仍被切掉 |
+
+1.8.8 的守門寫 `Reading file: {path}`（**沒有後綴**）→ 綠燈而實機是壞的。
+
+> 🔴 **判準：fixture 的每個欄位都要來自實機捕捉，
+> 不能只抄「看起來重要」的那一段。**
+> 三次都是「我保留了自己認為關鍵的部分，而被丟掉的那部分才是關鍵」。
+
+### 修法
+
+樣板後綴丟掉 —— 取第一個逗號前的段落，**但只在它看起來像檔案時**
+（含 `/` 或 `.` 且無空白）。指令裡的逗號要保留（`ls a,b` 已釘反證）。
+
+實機六種真實 detail 的結果：
+
+```
+Reading file: /home/…/nana-team-agent/AGENTS.md, all lines  → ⋯ang/kiro-cli/projects/nana-team-agent/AGENTS.md
+Reading file: sample.txt, all lines                          → sample.txt
+I will run the following command: ls -la /home/…/agents      → ls -la /home/paddyyang/kiro-cli/projects/nana-t⋯
+Searching for: marker                                        → marker
+```
+
+### 測試
+
+60 條（+7，fixture 全部改用實機原字串）。一條舊斷言更新
+（原本期望保留 `, all lines`，那是舊行為）。
+全量 **3206 passed**，反證 2 項全紅。
+
 ## 1.8.8 (2026-09-11)
 
 > ℹ️ 本段原本標 1.8.7，而**那個版號在我跑全量測試時被另一個 session
