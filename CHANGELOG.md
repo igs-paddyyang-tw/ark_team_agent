@@ -6,6 +6,94 @@
 
 ---
 
+## 1.8.2 (2026-09-11)
+
+### 🔴 TG 完成卡片只有計數，不說完成了什麼
+
+使用者回報：
+
+> 做完了，訊息只有完成，沒有完成項目，會很空
+
+```
+🎰 遊戲研發工程師 ✅ 完成
+📋 [上文] 用戶「…」→ [當前] 把這個流程和知識記下來
+✅ 已完成（1 步驟）          ← 三行裡沒有一行說做了什麼
+```
+
+兩個獨立缺口疊在一起：
+
+### G1：完成時把已收集的資訊丟掉
+
+`_render(done=True, user_facing=True)` 只用 `len()`，
+而 `_steps` 就在手上（`finalize()` 第一行就是「空就 return」→ 保證非空）。
+
+**工作中的畫面刻意不動** —— 它每 3 秒 edit 一次，刷工具清單是噪音。
+兩種畫面需求相反，原本卻綁在同一個 `_detail` 旗標上。
+
+### 🔴 G2：kiro 的 detail 從來沒被擷取
+
+實測 kiro-cli 2.21.1 的真實輸出 —— **detail 就在同一行**：
+
+```
+Reading file: sample.txt, all lines (using tool: read)
+I will run the following command: ls (using tool: shell)
+Searching for: marker (using tool: grep)
+I'll create the following file: out.txt (using tool: write)
+```
+
+而原本的 kiro pattern `(?:Using tool|Tool):\s*([a-z_]+)` **只有一個群組**，
+`feed()` 取 detail 的條件是 `m.lastindex >= 2` → **永遠是空字串**。
+帶 detail 的 pattern 全是 **Claude Code 格式**（`⏺ Read(file_path=…)`），
+而所有 team 部署都是 `backend: kiro` → 那些 pattern 在生產環境從沒命中過。
+
+> 🔴 **既有 20 條測試全綠，因為它們也全用 Claude Code 格式**
+> —— 測試對著一個沒有部署在用的格式。新守門的 fixture 一律用實測捕捉的輸出。
+
+新增 `_KIRO_TOOL_PATTERN`（具名群組，不依賴群組順序這個隱性契約）。
+
+### 修好後
+
+```
+🎰 遊戲研發工程師 ✅ 完成
+📋 把這個流程和知識記下來
+
+✅ 已完成（4 步驟）
+　⚙️ 執行 ls
+　🔍 分析 marker
+　🔍 分析 sample.txt, all lines
+　✍️ 撰寫 knowledge/wiki/weknora-upload-flow.md
+```
+
+- 階段標籤由 `_PHASE_MAP` **去掉結尾的「中」**導出（`✍️ 撰寫中` → `✍️ 撰寫`），
+  不另建「完成版」對照表 —— 兩份必然漂移
+- 對象取**第一個 `: ` 之後**（指令可能含冒號，取最後一個會把
+  `git commit -m "fix: x"` 切成 `x"`）
+- 相鄰重複摺疊成 `×N` —— 沒有 detail 時整批會長得一樣，
+  印 6 行 `⚙️ 執行` 是**換一種形式的空**。只摺相鄰的：
+  `讀 A → 寫 B → 讀 A` 要看得出讀了兩次
+
+### 順帶修三個潛在缺陷
+
+| # | 缺陷 | 為什麼現在才會咬人 |
+|---|---|---|
+| ① | `feed()` 不清 ANSI，而 `_TOOL_DONE_PATTERN` 是 `^` 錨定的 | 帶 `\x1b[?25l` 前綴的「Completed in」行永遠不判完成，工具停在 🔧 |
+| ② | 標記完成用**整行子字串**比對 | **G2 之前不可達**（kiro 行沒有 detail）。detail 填進來後，`🔧 fs_read: Searching for: read` 會被 `read` 命中 |
+| ③ | 截斷警告比摺疊後的行數 | 6 步摺成 4 行時誤報「僅顯示最後 4 項」——**沒截斷卻報截斷，就是指標說謊** |
+
+`_lines: list[str]` → `_steps: list[_Step]`（`_lines` 降為衍生的唯讀 property，
+既有 20 條測試不動）。從字串剖回結構是本套件記過最多次的病。
+
+### 測試
+
+`tests/test_tool_tracker_done_items.py` 25 條（fixture 用實測捕捉的 kiro 輸出）。
+既有 `test_tg_ux.py` / `test_tooltracker_orphan.py` 的 fixture 改用 `_Step`
+（內部表示變更，非語意變更）。全量 **3150 passed**。
+**8 項反證全部有紅** —— 其中一項第一版是空的（fixture 的順序讓錯誤實作也給對答案，
+反證沒紅才發現）。
+
+⚠️ **本版只改顯示。** agent 若根本沒呼叫 `reply()`，答案仍不會出現
+—— 那是 agent 行為問題，不在本版範圍。
+
 ## 1.8.1 (2026-09-10)
 
 ### 🗂️ 記憶歸檔移出知識庫 —— 記憶歸記憶、知識歸知識
