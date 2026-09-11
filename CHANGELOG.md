@@ -34,6 +34,67 @@
 守門 11 條含反證（add -A / 無變更不 commit / 不夾帶 staged / P4a 不碰 degraded）。
 全量 3125+ passed。
 
+### 🔴 1.8.3 的 MCP 追蹤在實機一個都抓不到 —— spinner 前綴
+
+1.8.3 發完後照約定做實機驗證（派工給 `data-agent`，走 `/api/output`
+撈原始輸出）。結果：**偵測到 3 個工具起始行，而 tracker 只抓到 1 個**。
+
+真實的行長這樣：
+
+```python
+'⠹ Thinking...\x1b[2K\x1b[1G\x1b[0mRunning tool \x1b[38;5;141mwiki_query\x1b[0m with the param…'
+'⠧ Thinking...\x1b[2K\x1b[1GI will run the following command: \x1b[38;5;141mls\x1b[0m… (using tool: shell)'
+```
+
+kiro-cli 用 `\x1b[2K\x1b[1G`（清行 + 回第 1 欄）在同一行重繪 spinner，
+所以**清掉 ANSI 之後，點字字元與 `Thinking...` 會留在行首** ——
+而 `_MCP_TOOL_PATTERN` 是 `^` 錨定的，全被擋掉。
+
+> 🔴 **spinner 不是 ANSI**（U+2800–U+28FF 點字區），清 ANSI 清不掉。
+
+### 為什麼 1.8.3 的測試全綠
+
+我的 `REAL_MCP` fixture 是從一份**已經清過 ANSI 的 dump 手抄**的，
+而那批行剛好沒有 spinner（它只在部分重繪出現）。
+
+> 💡 **手抄的 fixture 會丟掉來源裡不顯眼的東西。**
+> 本版新增的 `RAW_FROM_MACHINE` 直接從 `/api/output` **原樣取出**
+> （含 spinner 與完整 ANSI），未經任何清洗。
+
+### 修法：兩層，各自足夠
+
+| 層 | 內容 |
+|---|---|
+| ① | `_SPINNER_RE`（U+2800–U+28FF + 選配 `Thinking...`）在 `feed()` 一併清掉 |
+| ② | `_MCP_TOOL_PATTERN` **不再 `^` 錨定** |
+
+⚠️ 反證時發現**單獨移除任一層都不會紅**（另一層接住了），
+兩層同時移除才紅。刻意保留兩層：spinner 的重繪行為會隨 kiro-cli 版本變。
+已加 `test_two_layers_are_intentional_and_each_is_sufficient` 釘住
+「兩層都要在」並寫明為什麼單獨反證不會紅 ——
+**否則下一個人會以為其中一層是死碼。**
+
+### 實機驗收
+
+```
+📊 數據分析師 ✅ 完成
+📋 查知識庫 / ls / 回覆
+
+✅ 已完成（3 步驟）
+　🔍 分析 知識庫        ← wiki_query（MCP）
+　⚙️ 執行 ls            ← shell（內建）
+　✅ 回覆 卡片驗證       ← reply（MCP）
+```
+
+### 順帶：我自己產 fixture 時的錯
+
+`repr(l) + "\n"` 把換行放在**字串字面值外面** → 相鄰字面值黏成一整行，
+於是 fixture 只有一行、只抓到第一個工具。正確是 `repr(l + "\n")`。
+
+### 測試
+
+37 條（含 3 條用實機原始行）。全量 **3182 passed**。反證 15 項全紅。
+
 ## 1.8.3 (2026-09-11)
 
 ### 🔴 MCP 工具完全沒被追蹤 —— 團隊 agent 最重要的動作全是隱形的
