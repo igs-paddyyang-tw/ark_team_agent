@@ -6,6 +6,32 @@
 
 ---
 
+## 1.8.11 (2026-09-11)
+
+### 📎 reply_file 補 topic_id —— worker 送檔可指定頻道（對稱 reply）
+
+回報：worker 的 HTML 日報（`reply_file`）進不了指定頻道，只能到「所屬 leader
+的 topic」。根因：`reply_file` 送檔一律走 `_resolve_output_topic`（寫死 worker→
+leader topic），而 `reply` 早有 `topic_id` 覆寫能力，`reply_file` 沒有 —— 套件層
+限制，非提詞能修。
+
+修法（對稱 `reply`）：
+- `/api/reply-file` 端點加顯式 `topic_id` 分支，走**與 reply 同一個**
+  `allowed_explicit_topics()` 白名單（已綁定 topic ∪ announce_topics ∪ general），
+  送檔前驗證、排在 `_resolve_output_topic` 之前（顯式優先）
+- `_handle_reply_file` payload 加 `topic_id`（不給則走舊 leader-topic 邏輯，相容）
+- schema 加 `topic_id` 描述
+
+守門 6 條 + 反證（移白名單→紅）。順修既有 `test_reply_file_endpoint_uses_router`
+的固定 2000 字元截取窗口（被新分支撐爆 → 改取到下一個 `@app.post` 為界）。
+
+### ➕ 本 wheel 同時含 1.8.10 的 TG 卡片 📋 行修正
+
+1.8.10 bump 完沒發成 Release，其內容從同一份 `src/` 打進本 wheel：
+**`summarise_task()` 剝掉 `[上文]…[當前]…` 包裝**（`constants.py` /
+`daemon.py` / `telegram.py`）+ `test_clarify_routing` 的 worktree skip。
+細節見下方 1.8.10 段落。
+
 ## 1.8.9 (2026-09-11)
 
 ### 🔴 1.8.8 的修法在實機**仍然**切掉檔名 —— kiro 的樣板後綴
