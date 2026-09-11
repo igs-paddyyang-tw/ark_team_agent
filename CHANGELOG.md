@@ -6,6 +6,29 @@
 
 ---
 
+## 1.8.7 (2026-09-11)
+
+### 🔍 session 監控成為套件預設能力 —— 所有部署開箱有
+
+原本 kiro-cli session 監控頁只在 `apps/team-website/`（paddy 自己的官網），
+其他部署升級後只有 session_web 後端、沒有可看的頁面。改為套件標準能力
+（paddy 做的成為預設樣板）：
+
+- **daemon 33333 API 掛 `session_web` router**（`/api/sessions*`）+ startup 啟動
+  tailer（flag `ARK_KIRO_TAIL_ENABLED` on 時）→ 所有部署一致，內建頁 / 完整官網頁
+  都讀 daemon 33333。
+- **內建唯讀頁**（`dashboard_page.py`，health_port+5000）加 session 監控區：
+  session 清單（狀態燈 ●執行/⚠️審批/○閒置 + 工具數）+ 時間軸（tool.call+result
+  配對、工具圖示 📖✏️⚡🔍🔌）。
+- 🔴 **內建頁唯讀**（GET only，無審批按鈕）—— permission 審批是寫入操作，
+  走有 auth 的完整官網頁（`apps/team-website` 的 `/app/sessions`）。
+  `READONLY_ENDPOINTS` 加 `/api/sessions`（守門白名單）。
+
+> 💡 分工：內建頁 = 開箱即看（唯讀監控）；完整官網頁 = 有 auth + 可審批（層次 B 開啟時）。
+
+實機：33333 `/api/sessions` 200、tailer 啟動、內建頁 render 含 session 區。
+全量 3193 passed、內建頁守門 45 passed。
+
 ## 1.8.6 (2026-09-11)
 
 ### Skill 提示門檻 12 → 16
