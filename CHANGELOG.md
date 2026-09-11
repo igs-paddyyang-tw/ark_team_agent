@@ -6,6 +6,91 @@
 
 ---
 
+## 1.8.3 (2026-09-11)
+
+### 🔴 MCP 工具完全沒被追蹤 —— 團隊 agent 最重要的動作全是隱形的
+
+1.8.2 修好「完成卡片要說做了什麼」之後，實機驗證（派工給 paddy 的
+`data-agent`，走 `/api/output` 撈原始輸出）發現 **MCP 工具是另一種格式**：
+
+```
+Running tool reply with the param (from mcp server: team)
+ ⋮  {
+ ⋮    "text": "格式測試完成"
+ ⋮  }
+ - Completed in 0.136s
+```
+
+而既有 pattern **一條都不匹配**（沒有 `Tool:` 冒號、行首是大寫 `Running`）
+→ `wiki_query` / `wiki_ingest` / `reply` / `send_to_instance` /
+`delegate_task` **全部不計入步數，也不會出現在完成清單**。
+
+> 🔴 使用者回報的那張「✅ 已完成（**1 步驟**）」正是這樣來的 ——
+> 任務是「記下來 + 寫進知識庫」，而只有 `fs_write` 被算到。
+
+### detail 取參數 JSON，不取 server 名
+
+參數在**下一行**（`⋮` 區塊），所以需要跨行狀態（`_awaiting_param`）。
+取第一個 `"鍵": "值"`：
+
+```
+✅ 已完成（3 步驟）
+　🔍 分析 知識庫              ← wiki_query 的 query
+　✅ 回覆 格式測試完成         ← reply 的 text
+　✍️ 撰寫 knowledge/wiki/weknora.md
+```
+
+`from mcp server: team` 的 `team` **刻意不當 detail** —— 那個字對使用者沒有資訊。
+
+三個邊界：參數行處理排在 pattern 迴圈**之前**（否則 `⋮  {` 會被
+`^([a-z_]{3,30})\(` 那條很寬的 pattern 誤判）；`reset()` 要清跨行狀態；
+參數區塊沒出現時自行解除等待（格式變動不能讓它卡住）。
+
+### 發版腳本：寫入回報失敗 ≠ 沒寫進去
+
+發 1.8.2 時：
+
+```
+⚠️ CHANGELOG 同步失敗（IncompleteRead: 326980 bytes read, 8426 more expected）
+   手動補：把本機 CHANGELOG 的 `## 1.8.2` 段落插到 … 第一個 `## ` 之前。
+```
+
+**而遠端其實已經寫進去了** —— `IncompleteRead` 發生在讀「PUT 的回應」時。
+照那行指示手動補會插出**重複段落**，而 `ark-bot-agent` 的 CHANGELOG 檔頭
+記著那正好發生過一次（`ccac2b1`）。
+
+兩個結構缺陷：① PUT 的例外逃到外層 `except` → 回讀那段根本沒跑到
+② README 那支的回讀寫在「PUT 成功」的分支裡 → 回報失敗時完全不驗。
+
+修法：例外就地攔下，**不論 PUT 回報什麼都回讀**（唯一的真相是遠端的內容），
+失敗指示一律指向**重跑那支冪等的同步**（`_resync_hint`，單一出口）。
+
+> 🔴 順帶抓到兩處 `spec.name` —— **`PackageSpec` 沒有這個欄位**。
+> 它們寫在失敗路徑的提示字串裡，所以**一次都沒被執行過**，
+> 真的失敗時那行自己會 `AttributeError`（使用者連該怎麼補都看不到）。
+> 已加通則守門：所有 `spec.X` 必須是真欄位。
+
+### 訂正：`--resume` 的機制先前描述錯了
+
+1.0.15 的註解寫「不帶 `--resume` 會清空記憶／舊歷史從此取不回」。
+實測更精確的是：
+
+- session 以 **cwd 為 key**，同一個 cwd **可以有多個**（`agents/leader-agent` 有 14 個）
+- `--resume` 的語意是 `--help` 原文的「Resume the **most recent** conversation」
+- 不帶它 → **另開新 session 並成為最新**；**舊的沒被刪**
+  （`--resume-id` / `--resume-picker` / `-l` 還找得到）
+
+對使用者的體感一樣（agent 忘記），但機制不同 —— 而機制決定了可行的修法。
+> 💡 **誤導性的註解比沒有註解更糟**：寫「刪除」的話，
+> 下一個人不會想到那些資料其實還救得回來。已加守門釘住措辭。
+
+### 測試
+
+`test_tool_tracker_done_items.py` 33 條（MCP fixture 用**實機派工捕捉**的輸出）、
+`test_release_sync_readback.py` 14 條。全量 **3176 passed**。
+反證 **12 項全部有紅** —— 其中兩項第一版是空的
+（`inspect.getsource` 走 linecache 讀到舊內容；`sed` 的行號因先前的編輯而位移）。
+
 ## 1.8.2 (2026-09-11)
 
 ### 🔴 TG 完成卡片只有計數，不說完成了什麼
