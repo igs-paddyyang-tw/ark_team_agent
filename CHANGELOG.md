@@ -6,6 +6,52 @@
 
 ---
 
+## 1.8.12 (2026-09-14)
+
+### 🔴 `mcp_roundtrip` 的判準跨了兩個時間尺度 —— 它抓不到「今天壞了」
+
+`_tool_log()` 的 `callers` **完全沒有時間窗**：讀整個 `tool_calls.log`
+累積成 set，於是任何**曾經**呼叫過工具的 agent 永久算「有呼叫」。
+而探針的判準是「窗內有 inbound ∧ **有史以來**零呼叫」——
+拿兩個不同時間尺度的東西在做 ∧，只抓得到「從一開始就壞的 mcp」。
+
+實測（2026-09-14 paddy）：7 個 agent 最後一次對外送出在 **65~68 小時前**，
+`callers` 仍是 7 個全在、`/api/health` 的 **42 個探針 P0/P1 全 0**。
+**一個團隊可以整整 65 小時零對外產出而所有 P0 探針全綠。**
+
+修法：`callers` 加 24h 窗（`_CALLER_WINDOW_HOURS`）。三個邊界是刻意的：
+
+| 邊界 | 為什麼 |
+|---|---|
+| `last_outbound` **不套窗** | `exit_liveness` 要的是「最近一次的成敗」，陳舊與否由它自己用 `_EXIT_STALE_HOURS` 判。套了窗，一筆 24h 前的失敗就此隱形 |
+| 新增 `_INBOUND_GRACE_MINUTES`(15) | 收緊判準要先問它會多抓誰（1.7.5 誤判事故的教訓）。kiro-cli 首次冷啟含 MCP 握手要 2~4 分鐘，那期間 agent 收了訊息但一個工具都還沒呼叫 |
+| 時間解析失敗 → **仍計入 callers** | fail-safe。若排除，log 格式一變就是整批假警報，而常駐假警報的代價是維運開始忽略整個 degraded 欄位 |
+
+⚠️ **收益要等有流量才驗得到**：量測當下五個部署 44 個 instance 的
+`last_inbound` 全是 0（皆剛重啟，而 `last_inbound` 不落盤）→ 探針前半判準恆假，
+新舊行為都回「不判定」。推廣理由是**這個缺陷是確定的程式碼事實且修法安全**，
+不是「觀察期間沒再發生」。
+
+### 🔴 stdout reader 的靜默退出路徑（與 1.7.1 同形狀，換了例外型別）
+
+`_read_output()` 原本是 `except (asyncio.CancelledError, OSError): pass`
+—— **pipe 壞掉與正常關閉長得一模一樣**，兩者都靜默。這個 task 是唯一的
+stdout 讀取者，它一死，那個 agent 的產出永久消失而 journal 一個字都沒有。
+
+1.7.1 修過同一個形狀的一個實例（超長單行的 `ValueError` 不在 except 清單裡），
+**但沒有把同一個 try 的其他 except 一起看過**。
+
+- `OSError` 拆出來獨立 `log.warning`（`CancelledError` 維持靜默 —— 它是正常關閉）
+- 補 `except Exception` 兜底：例外逃出 task 後 asyncio **只在 GC 時**印一句
+  "Task exception was never retrieved"，那句話可能永遠不出現
+
+### 守門
+
++7 條（探針時間窗 4、stdout reader 3），**反證 6 項全部有紅**。
+既有三條 `mcp_roundtrip` 測試的 fixture 寫死 `2026-09-08`，加窗當天全部滑出窗外
+→ 改用相對時間（`_ago()` / `_inbound_ago()`），不再隨時間腐壞。
+全量 **3230 passed / 28 skipped**。
+
 ## 1.8.11 (2026-09-11)
 
 ### 📎 reply_file 補 topic_id —— worker 送檔可指定頻道（對稱 reply）
