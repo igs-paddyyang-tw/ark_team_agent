@@ -6,6 +6,69 @@
 
 ---
 
+## 1.8.14 (2026-09-14)
+
+### 🔴 `deep_think` 在真實部署上完全沒用 —— `model: auto` 擋住了它
+
+1.8.13 的 `_resolve_model` 是「顯式 `model` > `deep_think` > 不指定」。
+而 **`team.yaml` 幾乎都有 `defaults.model: auto`**（paddy／nana 都是）
+→ 每個 instance 的 `model` 是 `"auto"` 而非 `None`
+→ 「顯式優先」永遠命中 → **`deep_think` 一次都不會生效**。
+
+修法：`auto` **不算顯式指定**。它的語意本來就是「讓系統決定」——
+那是「沒有意見」的表達方式，不是「我要這個模型」。
+（`auto` 仍照常傳給 kiro-cli，只是它不再擋住 `deep_think`。）
+
+> 🔴 **1.8.13 的 11 條守門全綠，而功能是死的。**
+> 因為 fixture 的 `model` 是 `None` —— **測試把「輸入從哪來」也一起假設掉了**。
+> 抓到它的是實機：設定 → 重啟 → 讀 `/proc/<pid>/cmdline`，
+> 看到 `qa-agent --model=auto`。
+>
+> 💡 判準：**「守門全綠」證明的是行為沒變，不是功能有效。**
+> 一個從未在真實設定下跑過的功能，它的測試多半也活在一組不真實的輸入上。
+
+實機驗收（paddy，`qa-agent` 設 `deep_think: true` + `deep_think_model: claude-opus-4.5`）：
+
+```
+qa-agent      --model=claude-opus-4.5   ← deep_think 生效
+其餘 6 個      --model=auto              ← 未受影響
+```
+
+守門 +3（`auto` 不擋 deep_think／`auto` 照常傳遞／真正的顯式仍然贏），反證 2 項全紅。
+
+### 🧭 ACP：補錄 permission 流程與失敗路徑，而它推翻了我從單一 fixture 歸納的規則
+
+第二份 fixture（不帶 `--trust-all` → shell 被拒）。**兩份合起來才看得到**：
+
+| | 成功（read） | 失敗（被拒的 shell） |
+|---|:--:|:--:|
+| `_meta.kiro.toolName` | ❌ 無 | ✅ **有** |
+| `title` | 描述句 | **就是工具名** |
+| 結果在哪 | `rawOutput` | **`content`** |
+
+- 1.8.13 我從成功那條路歸納出「完成事件拿不到真工具名」——
+  **那是過度概括**，失敗的 `tool_call_update` 是有 `_meta` 的
+- **失敗的原因在 `content`，不在 `rawOutput`**（實錄 "User denied tool execution"）。
+  只看 `rawOutput` 會讓「為什麼失敗」完全消失 —— 新增 `content_text` 與 `outcome_text()`
+- 💡 **工具被拒 ≠ turn 失敗**：agent 優雅處理了拒絕，`stopReason` 仍是 `end_turn`。
+  所以成敗要分兩層：turn 的（`stopReason`）與個別工具的（`status`）
+
+> 🔴 判準：**只錄一條路徑歸納出的規則，會在另一條路徑上壞掉。**
+
+`session/request_permission` **目前刻意不解析**（`normalize` 回 `None`），
+並有守門釘住這個現況 —— 它是 agent → client 的 request，
+「誰來回答」屬接線層（2.4）的決定。誠實記錄，不假裝涵蓋。
+
+守門 +5，反證 3 項全紅。
+
+### ⚠️ 範例裡的模型名原本是假的
+
+CHANGELOG／issue／測試的範例寫 `claude-opus-5` —— **那個不存在**。
+kiro-cli 2.21.4 的合法清單（讓它自己列的）：`auto` / `claude-sonnet-4.6` /
+`claude-opus-4.5` / `claude-sonnet-4.5` / `claude-sonnet-4` / `claude-haiku-4.5` /
+`deepseek-3.2` / `minimax-m2.5` / `minimax-m2.1` / `glm-5` / `qwen3-coder-next`。
+全部改成真值 —— **測試是別人抄設定的範本**，用不存在的值等於教人寫壞的 team.yaml。
+
 ## 1.8.13 (2026-09-14)
 
 ### 🧭 ACP 事件解析層（Phase 2 的 2.1–2.3）—— 只解析，**尚未接線**
