@@ -6,6 +6,51 @@
 
 ---
 
+## 1.8.15 (2026-09-14)
+
+### 🔴 失敗的 `tool.result` 的原因是空的 —— 兩層 `content` 包裝沒被解析
+
+`session_web/normalizer.py` 的 `_content_text` 只認兩種形狀
+（字串、`{"type":"text","text":…}`），而 ACP 的 `tool_call_update`
+失敗時是**第三種**：
+
+```json
+"content": [{"type":"content","content":{"type":"text","text":"User denied tool execution"}}]
+```
+
+→ 回空字串 → 失敗的 `tool.result` 的 `summary` 是 `""`、`output_bytes` 是 `0`。
+**「為什麼失敗」完全消失**，而事件本身看起來正常（status 是對的 `error`）。
+
+沒被發現是因為**既有測試的資料是手寫的 inline dict**（`V3_PROMPT = {...}`），
+而手寫的都是成功案例 —— **失敗路徑從來沒有真實資料跑過**。
+
+新增 `tests/test_session_web_real_capture.py`：用兩份**真實錄製**
+（kiro-cli 2.21.4）重播，斷言零 `error` 事件、失敗原因帶得出來。
+
+### 🔴 而這批 fixture 的由來是我重複造了一份輪子
+
+2026-09-14 我建了 `ark_team_agent.acp`（約 300 行 + 18 條測試）做 ACP 事件解析
+—— 而 **`session_web/normalizer.py` 早就做完了同一件事，而且更完整**
+（有 `SessionEvent` 模型、`session/request_permission`、v3 storage source、
+無法解析時落 `error` 事件而非靜默丟棄）。實測用我的真實 fixture 重播它：
+兩份都**零 error**，且多解析出 `permission.request`。
+
+→ **`ark_team_agent.acp` 已移除**（1.8.13 加入、1.8.15 移除，期間零消費者）。
+
+> 🔴 **判準：動手寫一個解析器之前，先問「這件事有沒有人已經做了」。**
+> 我問對了一半（「P0 的結論還成立嗎」→ 重錄，抓到形狀變化），
+> 但沒問另一半（「有沒有既有實作」）。
+> 兩份並存必漂移 —— 那是本專案最高頻的病，而這次是我製造的。
+>
+> 💡 留下的是它唯一的真價值：**兩份真實錄製的 fixture**，
+> 而它們立刻抓到既有實作的一個真缺陷（上一節）。
+
+### ⚠️ 行為變更
+
+`from ark_team_agent.acp import ...` 不再可用。該模組 1.8.13 加入、
+從未被任何地方 import（實測確認），移除對既有部署零影響。
+ACP 解析請用 `ark_team_agent.session_web.normalizer`。
+
 ## 1.8.14 (2026-09-14)
 
 ### 🔴 `deep_think` 在真實部署上完全沒用 —— `model: auto` 擋住了它
