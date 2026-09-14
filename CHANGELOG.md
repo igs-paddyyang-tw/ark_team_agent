@@ -6,6 +6,124 @@
 
 ---
 
+## 1.8.13 (2026-09-14)
+
+### 🧭 ACP 事件解析層（Phase 2 的 2.1–2.3）—— 只解析，**尚未接線**
+
+`ark_team_agent.acp`：把 `kiro-cli acp` 的 JSON-RPC 事件正規化成資料類。
+接到 ToolTracker／成敗判定是下一步（plan 的 2.4），刻意分開 ——
+解析層可以用真實 fixture 完整測試，接線層需要實機驗證。
+
+**fixture 是重錄的，不是沿用 P0 的**：P0 探勘做於 cli **2.14.2**，本機現在是
+**2.21.4**。錄下來的 30 行原樣進版控（逐位元組比對過），
+而它**推翻了 P0 的一個推論**：
+
+| 事件 | `_meta.kiro.toolName` | `status` | `rawOutput` |
+|---|:--:|:--:|:--:|
+| `tool_call_chunk`（私有通道） | ❌ | ❌ | ❌ |
+| `tool_call`（標準） | ✅ | ❌ | ❌ |
+| `tool_call_update`（標準） | ❌ | ✅ | ✅ |
+
+P0 說「真名在 `_meta.kiro.toolName`」—— 對，但它沒說**三個快照中只有一個帶它**。
+照 P0 從 chunk 取名會拿到 `None`；照「取最後一個快照」也會 ——
+**而那個是唯一知道成敗的快照**。所以有 `merge_tool_calls()`（後到覆蓋先到，
+但空值不覆蓋非空值），合併後才同時有「真名」與「成敗」。
+
+三個安全邊界：
+- **`tool_name` 欄位不退回 `title`** —— title 是 LLM 生的描述句
+  （實錄 "Reading sample.txt:1, listing ."）。退回去會讓欄位永遠有值而可信度不明，
+  「有沒有拿到真名」就再也檢查不出來。顯示層的 fallback 在 `display()`
+- **未知的 `stopReason` → `None`，而 `ok` 對 None 回 False** ——
+  新版 kiro 加一個沒見過的值**不會被誤判成成功**。「不知道」不得併進「成功」
+- **只有 `session/prompt` 的 request id 才產 `TurnEnd`** ——
+  認錯會把一次還在跑的 turn 判成已完成。寧可沒有終結訊號
+
+守門 +18、反證 5 項全紅。⚠️ 其中一條反證抓到**我自己寫的自我指涉測試**：
+它拿 `UPDATE_METHODS` 過濾再跟 `UPDATE_METHODS` 比 —— 把常數改成只剩一條，
+兩邊一起變、照樣綠。已改成寫死 fixture 的事實。
+
+### ✨ per-agent 深度思考 `deep_think` —— 切換到團隊指定的 reasoning model
+
+使用者記得「1.5.0 為每個 agent 加了可選控的深度思考模式」，而讀碼／讀設定／
+查 git 全部查無（`docs/issues/2026-09-11-deep-thinking-setting-not-found.md`
+——1.5.0 的內容是 hang_detector v2 + 維運日報三軌 + M4 TG menu）。**本版是它第一次真的存在。**
+
+```yaml
+# team.yaml
+deep_think_model: claude-opus-5   # 團隊層：深度推理用哪個模型
+instances:
+  - name: leader-agent
+    deep_think: true              # per-agent：這個 agent 需要深度推理
+```
+
+**兩層分開是刻意的**：`model` 是「用哪個模型」（實作），`deep_think` 是
+「這個 agent 需要深度推理」（意圖）。換模型時只改團隊層那一處。
+
+四個邊界：
+
+| 邊界 | 為什麼 |
+|---|---|
+| 顯式 `model` **贏過** `deep_think` | 已經指名道姓的不該被布林開關蓋掉。反過來的話，agent 會**靜默地**失去自己指定的模型，而 team.yaml 上兩個欄位都還在 |
+| 宣告了但團隊沒設 model → **照常啟動**，進 `degraded` | 空的宣告不該讓服務掛掉。**設定不完整的處置是「可見地降級」，不是「拒絕啟動」** |
+| `deep_think_model` 走**同一條**注入檢查 | 它一樣會被拼進 shell 指令；只驗 `cfg.model` 等於開了沒人看守的後門 |
+| 解析收在 `_resolve_model()` **單一出口** | `KiroBackendConfig` 有 4 個建構點，在每處各算一次必然漂移 |
+
+🔴 **loader 是逐欄位填的** —— 加 dataclass 欄位**不會**自動被讀到。
+漏掉 `fc.deep_think_model = ...` 那一行的症狀是完全靜默：team.yaml 寫了它而永遠是 None。
+已由 `test_team_yaml_deep_think_model_is_actually_read` 釘住。
+
+守門 +11、**反證 6 項全部有紅**（含「team.py 真的呼叫了 validate_deep_think」，
+用 `ast` 看 Call 節點而非字串比對）。
+
+### 🔴 wheel 漏包 `session_web/schema/*.json` —— package-data 白名單沒納入非程式碼資產
+
+`.py` 進得了 wheel 是 setuptools **預設**收的；`.json` 這類資產不是，
+要靠 `[tool.setuptools.package-data]`。而那份白名單只列 `templates/**/*`、
+`skills/**/*.md`、`scripts/*.py` —— `session_web/schema/*.json` 不匹配任何一條。
+
+實測解壓 1.8.12 的 wheel：`session_web/` 的 **8 個 `.py` 都在，`.json` 一個都沒有**。
+而 build 照樣回報 Successfully built。症狀只在 `ARK_SESSION_VALIDATE=1` 時才炸
+（`jsonschema` 讀不到檔），而 ACP 的 feature flag 預設關 → **一直沒有人碰到**。
+
+> 💡 又一個「失敗症狀是看不見時，它能無限期存在」。
+
+兩層守門：
+- **主閘門** `build_release.py::verify_wheel_content` 加「非程式碼資產」檢查，
+  漏了直接 `sys.exit(1)`。**驗法刻意不寫死檔名** —— 掃磁碟上有哪些就要求 wheel 都有，
+  否則下次加一個新 schema 又會靜默漏掉
+- `tests/test_wheel_packaging.py` 對已 build 的 wheel 再驗一次 +
+  用 `ast` 釘住主閘門本身還在（含「資產檢查有 `sys.exit`」—— 只印訊息的閘門擋不住東西）
+
+🔴 那條測試只驗**版號等於當前開發版號**的 wheel。用「dist 最新那個」會讓它在
+修法 build 出來之前永遠紅，而 build 又要先跑測試 —— 雞生蛋，且驗的是歷史產物。
+
+### 🔴 而查這個 bug 時挖到更隱蔽的一條：`egg-info` 會讓漏包在本機測不出來
+
+做反證（移除 package-data 那條 → 重 build）時，**wheel 照樣含那個 json**。
+我因此一度得出「那行沒有作用、問題單的根因診斷不成立」的**錯誤結論**。
+
+真相：`src/<module>.egg-info/SOURCES.txt` 是 `pip install -e .` 的產物，
+而 **setuptools build 時會沿用它當檔案清單**。於是
+
+| 環境 | 結果 |
+|---|---|
+| 本機（egg-info 恰好列了那個資產） | wheel 收得到 ✅ |
+| 乾淨環境（CI／別台機器／worktree） | 照 package-data 走 → **漏** 🔴 |
+
+用 `git worktree` checkout **v1.8.12 的乾淨樹**重 build 才看得到真相：
+同一份 pyproject，乾淨樹 build 出來的 wheel **不含**那個 json。
+連 egg-info 一起清之後，反證成立（移除→漏、加回→有）。
+
+修法：`build_wheel()` 除了 `dist/` 與 `build/`，**也清 `src/<module>.egg-info/`**。
+
+> 💡 判準：**驗 packaging 的改動要清掉所有「檔案清單快取」。**
+> `build/` 只是其中一個，egg-info 更隱蔽 —— 它在 `src/` 底下、
+> 不在套件目錄裡，「清 build/」的直覺掃不到它。
+>
+> 🔴 而這條的一般形狀是本檔記過最多次的那個：
+> **一個被污染的驗證環境，會讓錯的結論看起來有證據。**
+> 我不只沒驗出修法有效，還差點反過來宣稱「問題單錯了」。
+
 ## 1.8.12 (2026-09-14)
 
 ### 🔴 `mcp_roundtrip` 的判準跨了兩個時間尺度 —— 它抓不到「今天壞了」
