@@ -6,6 +6,66 @@
 
 ---
 
+## 1.8.18 (2026-09-15)
+
+### 🧭 ACP backend 接上了 —— `ARK_KIRO_ACP_ENABLED` 不再是擺設
+
+1.8.17 把「這個 flag 開了不改變任何行為」接進 degraded。本版把**行為**接上：
+flag 開 → daemon 用 `AcpManagedProcess` + `build_acp_command`
+（`kiro-cli acp`，JSON-RPC 事件流）取代 `kiro-cli chat` + stdout 解析。
+
+**⚠️ 預設仍是關的** —— 換掉所有 agent 的執行方式是高風險變更，要逐部署開。
+
+#### 為什麼是「繼承 `ManagedProcess`」而不是另一套
+
+daemon 對 instance 用的是 `pid`/`is_alive`/`kill`/`capture`/`output_count`/
+`send_input`/`proc`/`_pipe_broken`。ACP 一樣是 subprocess ——
+**差的只有 I/O 協定**。所以覆寫三個方法就夠（`start` / `_read_output` / `send_input`）。
+
+> 🔴 另一條路量過：`session_web.KiroAcpAdapter` 是**自包含**的
+> （自己 spawn、自己讀、自己 emit SessionEvent），上面那些成員**一個都沒有**
+> —— 拿它接 daemon 等於重寫 daemon 對 instance 的全部假設。
+> 這就是先前說「2.4 不是接線」的具體內容。
+
+#### 四個刻意的邊界
+
+| 邊界 | 為什麼 |
+|---|---|
+| **不偽造 chat 的就緒訊號** | ACP 的就緒是**確定的事件**（`session/new` 回 sessionId）。新增 `ACP_READY_MARK`，`READY_PATTERN` 認兩種 —— 偽造會讓「真的就緒」與「假裝就緒」無法分辨 |
+| permission **一律拒絕**且渲染成可見的一行 | daemon 不是互動式 UI，沒有人可以問。靜默放行等於把「沒有人核准」偽裝成「已核准」。⚠️ 但**一定要回應** —— 不回會讓 agent 端無限等待 |
+| `send_input` **不 await** turn 的回應 | daemon 的語意是 fire-and-forget；await 會讓投遞迴圈卡住整個 turn。turn 結束由 read loop 渲染成一行 |
+| 非 JSON 的 stdout 行**照收不丟** | 丟棄會讓「它說了什麼」永久消失 |
+
+#### 端到端實測（真的 spawn 一個 `kiro-cli acp`）
+
+```
+start() 2.7s · ready=True · READY_PATTERN 命中
+send_input → agent 回 "OK" → [acp] turn end stopReason=end_turn
+output_count 2 → 7（hang detector 的活動訊號有了）· kill 後 alive=False
+```
+
+守門 +15（含用**三份真實錄製**重播 `_render`），反證 **7 項全紅**。
+
+### ✅ `validate_unwired_flags` 已移除 —— 它的任務完成了
+
+1.8.17 加它時就寫明「當 daemon 真的依這個 flag 選 backend 時，
+`tests/test_unwired_flags.py` 會紅，那時把這段刪掉」。
+
+本版接上的**當下它就紅了**，依它自己的指示移除（函式 + 呼叫 + 測試檔）。
+
+> 💡 **一個描述現狀的檢查，設計成能在現狀改變時自己失效** ——
+> 這是它第一次、也是最後一次發揮作用。
+
+### ⚠️ 今天第四次踩「用字串比對判斷程式結構」
+
+`test_daemon_selects_backend_by_flag` 第一版驗「`ARK_KIRO_ACP_ENABLED` 在不在 src」
+—— 而把 `_use_acp = bool(getattr(...))` 改成 `_use_acp = False` **照樣綠**
+（那條字串還在註解與 getattr 的預設值裡）。改成用 `ast` 驗**資料流**：
+有變數的值來自讀那個 flag，且 `AcpManagedProcess` 的實例化在它控制的 `if` body 裡。
+
+另外三次都是 `ast.Constant` **包含 docstring**。判準已經很清楚：
+**凡是用 `ast` 找字串字面值，先把 docstring 拿掉**（本輪抽成 `_code_strings()`）。
+
 ## 1.8.17 (2026-09-15)
 
 ### 🔴 `ARK_KIRO_ACP_ENABLED` 開了不改變任何行為 —— 現在它會說出來
