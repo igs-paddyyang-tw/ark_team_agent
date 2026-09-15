@@ -6,6 +6,55 @@
 
 ---
 
+## 1.8.17 (2026-09-15)
+
+### 🔴 `ARK_KIRO_ACP_ENABLED` 開了不改變任何行為 —— 現在它會說出來
+
+查 ACP 2.4 接線時發現：**這個 flag 的唯一消費者是
+`session_web/api.py` 的 `/flags` 端點，而那個端點做的事是回報這個 flag 自己的值。**
+沒有任何地方依它改變行為。`KiroAcpAdapter`（188 行、完整可用）同樣**零生產消費者**。
+
+→ 設了 `ARK_KIRO_ACP_ENABLED=1` 的人會以為 agent 改走 ACP 了，
+而實際仍是 `kiro-cli chat` + stdout 解析。**開關看起來生效而實際沒有**
+—— 本專案最高頻的病。
+
+`validate_unwired_flags()` 把它接進 `degraded`（比照 1.7.4 的 `_semantic_warn`）。
+不拒絕啟動 —— 設了一個還沒接上的 flag 不是故障，是**期待落空**，可見就夠了。
+
+### 💡 這組守門設計成**會自己失效**
+
+一個描述現狀的檢查，若不能在現狀改變時自己紅掉，就會變成永遠正確的廢話
+—— 而讀的人分不出「還沒接」與「沒人維護」。所以有兩個反向斷言：
+`daemon.py`／`backend.py` **仍未引用**那個 flag、`KiroAcpAdapter` **仍無**生產消費者。
+真的接上時它們會紅，提醒把 `validate_unwired_flags` 的 ACP 段刪掉。
+
+反證實測：模擬「daemon 接上 flag」與「有人 import KiroAcpAdapter」，兩條都正確變紅。
+
+### ⚠️ 寫這組守門時，我當場踩到它要防的那個病
+
+`test_adapter_still_has_no_production_consumer` 第一版用字串比對，
+而 `config.py` 的 docstring 裡「`KiroAcpAdapter` 零生產消費者」**這句話本身**
+就命中了 → 誤判它是消費者。
+
+改用 `ast` 之後又踩第二次：那個名字也出現在 degraded 的**訊息字串**裡。
+最後的判準是 —— **同一個「有沒有被引用」的問題，對不同種類的名字答案相反**：
+
+| 名字 | 字串字面值算引用嗎 | 為什麼 |
+|---|:--:|---|
+| env var（`ARK_KIRO_ACP_ENABLED`） | ✅ 算 | `os.getenv("...")` 就是真的使用 |
+| class（`KiroAcpAdapter`） | ❌ 不算 | 它不會以字串被使用，出現在字串裡的必然是訊息文字 |
+
+### ⏸ ACP 2.4（daemon 改 spawn `kiro-cli acp`）**未做**
+
+量過介面差距：daemon 依賴 `ProcessManager` 的 `output_count`（hang detector 的
+`last_output` 來源）、`capture`（死亡時 dump）、`send_input`（投遞訊息），
+而 `KiroAcpAdapter` **一個都沒有** —— 它是自包含的（自己 spawn、自己讀、
+自己 emit SessionEvent）。
+
+所以 2.4 不是「接線」，是**寫一個實作 `ProcessManager` 介面的 ACP backend**
+並把 ACP 事件映射回 daemon 期待的訊號。那是可估但不小的工程，
+且會換掉所有 agent 的執行方式 —— 不在本輪做。
+
 ## 1.8.15 (2026-09-14)
 
 ### 🔴 失敗的 `tool.result` 的原因是空的 —— 兩層 `content` 包裝沒被解析
