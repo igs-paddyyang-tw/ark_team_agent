@@ -6,6 +6,40 @@
 
 ---
 
+## 1.8.19 (2026-09-16)
+
+### 🔴 修正 1.8.12 引入的誤報：「沒用 team 工具」不等於「壞了」
+
+`mcp_roundtrip` 的判準是「窗內有 inbound ∧ 窗內零 team 工具呼叫 → mcp 可能沒載入」。
+而 `tool_calls.log` **只記 team MCP 的工具**（reply / wiki_ingest / send_to_instance…）——
+agent 用 kiro-cli 內建的 `fs_write` 或跑 **skill 腳本**（`wiki_ingest.py`）
+**完全不會被記錄**。
+
+實例（2026-09-16 實測）：`paddy-agent` 111 小時零 team 工具呼叫而被判 P0，
+**而它 09-15 用 skill 腳本 ingest 了一頁 wiki** —— 它一直在工作。
+
+🔴 **這是我在 1.8.12 加時間窗時引入的**：
+舊行為（無窗）因為「有史以來呼叫過」而恆綠，看不出來；
+而當時量測，五個部署的 `last_inbound` **全是 0** → **量不到任何誤報**就推廣了。
+
+> 💡 判準：**「沒用某一類工具」不等於「壞了」——
+> 要有「連別的事也沒做」才是訊號。**
+
+修法：判準加第三個條件 —— `last_output` 在 inbound 之後有更新就不判定
+（`run_all` 現在把 `last_output` 一起傳進 `ProbeContext.state`）。
+
+守門 +3，反證 2 項全紅。其中一條用 `ast` 釘住**呼叫端真的傳了 `last_output`**
+—— 少了它，那個排除永遠不生效，而測試裡是自己塞的、看不出來
+（本專案最高頻的病：宣告了但沒接上）。
+
+### ⚠️ 順帶：既有守門抓到我改 detail 時漏掉時間窗
+
+改訊息文字時把 `24h` 拿掉了，而 `test_stale_call_outside_window_does_not_count`
+斷言「detail 要說清楚是時間窗」→ 正確地紅。已加回。
+
+> 💡 那條斷言當初是刻意加的（「detail 要能直接指向修法」），
+> 而它第一次發揮作用是擋住我自己。
+
 ## 1.8.18 (2026-09-15)
 
 ### 🧭 ACP backend 接上了 —— `ARK_KIRO_ACP_ENABLED` 不再是擺設
