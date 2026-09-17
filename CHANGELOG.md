@@ -6,6 +6,60 @@
 
 ---
 
+## 1.8.21 (2026-09-17)
+
+### ✨ `channel.extra_sources` —— 讓 instance 訂閱「本群以外」的訊息（只收不回）
+
+需求來源：`director-team-agent` 的 `strategy-agent`（跨組分析）被卡住 ——
+它的工作前提是「收集其他群組的訊息再分析」，而架構是 **1 team = 1 group**，
+其他群的訊息在 `_check_access` 入口就被擋掉。近 7 天它只有 1 次產出，
+**不是它壞了，是它要的輸入進不來**。
+
+```yaml
+channel:
+  group_id: -100xxx
+  extra_sources:
+    - chat_id: -100yyy
+      topic_id: 12            # 指定 topic
+      deliver_to: strategy-agent
+    - chat_id: -100zzz        # 不給 topic_id = 該群全部
+      deliver_to: strategy-agent
+```
+
+實作：
+- `config`：`ExtraSource` dataclass + `ChannelConfig.extra_sources`，載入時
+  巢狀 dict → dataclass，驗證 `deliver_to` 存在、`(chat_id, topic_id)` 唯一
+- `telegram`：新增 `_extra_map`（收件路由，**不動既有 `_topic_map`**），
+  `_check_access` 認來源群、`_resolve_instance` 加 `chat_id`（精確→整群→本群），
+  三個訊息入口傳 `chat_id`，啟動 log 印出綁定
+
+> 🔴 **只收不回** —— `group_id` 在 telegram.py 有 17 處送出/兜底用法，
+> 只收不回 → **一行都不用動**。把風險從「重構路由」降成「多一個入口」。
+> ast 守門釘住送出路徑不得碰 `_extra_map`。
+>
+> 🔴 **AC-8：放寬 chat_id 不等於放寬 user_id** —— locked 模式下 extra source
+> 的訊息仍受 `allowed_users` 約束（反證確認非白名單 user 被擋）。
+
+相容性：新欄位可選、預設空 list → **既有部署零改動**（既有 72 passed 零變化）。
+8 條 AC 全綠，關鍵 4 項反證全紅（AC-3 整群訂閱／AC-4 deliver_to／AC-5 重複／AC-8 白名單）。
+
+### 🔍 ACP 除錯：新增 `ARK_ACP_RAW_TRACE` 原始 JSON-RPC 落盤（1.8.20 併入）
+
+ACP 試點的症狀「daemon 送 1 個 chunk 後停住」只在真實 daemon 路徑發生，
+離線重現不出來，而 `_emit` 只保留渲染後的行（未知種類回空）。新增
+`AcpManagedProcess._raw_trace()`（`ARK_ACP_RAW_TRACE` 預設關）：在 JSON
+解析前、帶時間戳、追加落盤到 `state/acp_raw/<instance>.jsonl`，含 size cap +
+rotation（超過 5MB 轉 `.jsonl.1`，記憶體 byte 計數器，從現有大小起算）。
+
+> 🔴 **這個 flag 直接推翻了原本的根因假設**：用它拿到原始事件流後發現
+> agent 其實 2 秒回了正確答案（`stopReason=end_turn`），之前的「停住」是
+> **觀測不到**，不是功能失敗。ACP 全 7 agent 實測 13 turn、5 tool 呼叫、0 error。
+>
+> 💡 判準：**沒有原始事件流，「1 個 chunk」看起來像「停住」，
+> 實際是「完整且簡短的回應」。**
+
+守門 +9（TestRawTrace 6 + Rotation 3），反證 5 項全紅。
+
 ## 1.8.19 (2026-09-16)
 
 ### 🔴 修正 1.8.12 引入的誤報：「沒用 team 工具」不等於「壞了」
