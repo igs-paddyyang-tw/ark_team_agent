@@ -6,6 +6,16 @@
 
 ---
 
+## 1.8.24 (2026-09-22)
+
+### 🔧 發版閘門用乾淨環境跑，不再被執行環境的 flag 污染
+
+在 kiro-cli acp 環境裡發版的 agent／shell 會繼承 `ARK_KIRO_TAIL_ENABLED=1`
+（與 `ARK_KIRO_ACP_ENABLED`），而 `test_flags_off_by_default`（G-5）驗這些
+flag 預設關 → **全量閘門被自己的執行環境擋紅**，紅的理由與被發版的碼無關
+（1.8.23 發版時實際踩到）。`run_tests()` 改用剝除這兩個 flag 的環境跑，
+`run()` 加 `env` 參數 —— 把「記得 `env -u`」的人工步驟變成機制。守門 + 反證。
+
 ## 1.8.21 (2026-09-17)
 
 ### ✨ `channel.extra_sources` —— 讓 instance 訂閱「本群以外」的訊息（只收不回）
