@@ -6,6 +6,29 @@
 
 ---
 
+## 1.8.25 (2026-09-23)
+
+### 🔧 session 監控後台卡片顯示 agent 名而非 hash
+
+需求來源：魚機管家問題單（AIPC ARD8-RTX4090-2，開 `ARK_KIRO_ACP_ENABLED`
++ `ARK_KIRO_TAIL_ENABLED` 後）。內建後台頁與 `/api/sessions` 的 agent 欄位
+一律顯示 `local:<sha1[:8]>`（cwd 的 hash），使用者無法辨識是哪個 agent、
+也無法依 agent 選 session。
+
+根因：`session_web/tailer.py` 的 `tail_once` 硬編
+`agent = f"local:{sha1(cwd)}"`，而該處已持有 `cwd`，只缺 cwd→instance 對照。
+
+修法（向後相容）：
+- `LocalSessionTailer` 增可選參數 `cwd_to_instance`（鍵一律 `Path.resolve()`
+  正規化，避免尾斜線/相對路徑等形式差異漏配）。
+- 新增 `_label_for(cwd)`：命中對照回 instance 名，**對不到才退回
+  `local:<sha1>`**（無對照表時行為與舊版完全相同）。
+- `api.py` 啟動 tailer 時依 `daemon.config.instances` 的 `working_directory`
+  建表注入 —— 所有部署開箱受惠、不需改設定。
+
+守門 5 條（正向命中／路徑形式無關／未命中退回 hash／無對照表退回 hash／
+端到端事件 agent 欄位）＋反證（退回硬編 hash → 3 正向紅、2 fallback 綠）。
+
 ## 1.8.24 (2026-09-22)
 
 ### 🔧 發版閘門用乾淨環境跑，不再被執行環境的 flag 污染
